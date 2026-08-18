@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#15212a"/>
+  <path d="M118 105h196l80 80v222H118z" fill="#2f628b"/>
+  <path d="M314 105v80h80" fill="#71e6b5"/>
+  <path d="M165 278c0-44 30-75 75-75 24 0 43 9 56 25l-25 23c-8-10-18-15-31-15-25 0-43 18-43 42s18 42 43 42c13 0 23-5 31-15l25 23c-13 16-32 25-56 25-45 0-75-31-75-75Z" fill="#eaf6ff"/>
+  <text x="256" y="424" text-anchor="middle" fill="#bff6dc" font-family="Arial, sans-serif" font-size="52" font-weight="700">PNG</text>
+</svg>

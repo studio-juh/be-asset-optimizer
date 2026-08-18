@@ -1,0 +1,11 @@
+# Tauri / Rust
+src-tauri/target/
+
+# Node
+node_modules/
+dist/
+
+# Local app artifacts
+optimized/
+*.msi
+*.exe
