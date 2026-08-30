@@ -5,6 +5,7 @@
   "version": "0.5.0",
   "type": "module",
   "scripts": {
+    "prepare:ai": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-ai-models.ps1",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "tauri": "tauri"
