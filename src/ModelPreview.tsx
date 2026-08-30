@@ -20,6 +20,10 @@ export default function ModelPreview() {
   const viewportRef = useRef<HTMLDivElement>(null);
   const modelRef = useRef<THREE.Group | null>(null);
   const gridRef = useRef<THREE.GridHelper | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
+  const initialViewDirectionRef = useRef<THREE.Vector3 | null>(null);
+  const initialModelQuaternionRef = useRef<THREE.Quaternion | null>(null);
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const actionRef = useRef<THREE.AnimationAction | null>(null);
   const autoRotateRef = useRef(false);
@@ -91,6 +95,8 @@ export default function ModelPreview() {
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
     controls.screenSpacePanning = true;
+    cameraRef.current = camera;
+    controlsRef.current = controls;
 
     scene.add(new THREE.HemisphereLight(0xffffff, 0x536078, 2.2));
     const keyLight = new THREE.DirectionalLight(0xffffff, 3.2);
@@ -136,6 +142,7 @@ export default function ModelPreview() {
       root = loadedRoot;
       root.animations = animations;
       modelRef.current = root;
+      initialModelQuaternionRef.current = root.quaternion.clone();
       root.traverse((object) => {
         if (!(object instanceof THREE.Mesh)) return;
         object.castShadow = true;
@@ -156,6 +163,7 @@ export default function ModelPreview() {
       camera.updateProjectionMatrix();
       controls.target.set(0, 0, 0);
       controls.update();
+      initialViewDirectionRef.current = camera.position.clone().sub(controls.target).normalize();
 
       const grid = new THREE.GridHelper(diameter * 4, 20, 0x718096, 0xa7b0bd);
       grid.position.y = -size.y / 2;
@@ -214,6 +222,10 @@ export default function ModelPreview() {
       cancelAnimationFrame(frame);
       resizeObserver?.disconnect();
       controls.dispose();
+      controlsRef.current = null;
+      cameraRef.current = null;
+      initialViewDirectionRef.current = null;
+      initialModelQuaternionRef.current = null;
       mixerRef.current?.stopAllAction();
       mixerRef.current = null;
       actionRef.current = null;
@@ -224,6 +236,20 @@ export default function ModelPreview() {
       renderer.domElement.remove();
     };
   }, [model]);
+
+  const resetRotation = () => {
+    setAutoRotate(false);
+    autoRotateRef.current = false;
+    if (modelRef.current && initialModelQuaternionRef.current) modelRef.current.quaternion.copy(initialModelQuaternionRef.current);
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    const direction = initialViewDirectionRef.current;
+    if (!camera || !controls || !direction) return;
+    const distance = Math.max(camera.position.distanceTo(controls.target), 0.001);
+    camera.position.copy(controls.target).addScaledVector(direction, distance);
+    camera.up.set(0, 1, 0);
+    controls.update();
+  };
 
   if (!model) return <section className="model-preview-empty">
     <button className="drop-zone" onClick={chooseModel} disabled={loading}>
@@ -246,6 +272,7 @@ export default function ModelPreview() {
           <label><input type="checkbox" checked={showGrid} onChange={(event) => setShowGrid(event.target.checked)} />グリッド</label>
           <label><input type="checkbox" checked={wireframe} onChange={(event) => setWireframe(event.target.checked)} />ワイヤー</label>
           <label><input type="checkbox" checked={autoRotate} onChange={(event) => setAutoRotate(event.target.checked)} />自動回転</label>
+          <button onClick={resetRotation}>回転リセット</button>
           {stats.animations > 0 && <button onClick={() => setPlaying((value) => !value)}>{playing ? "停止" : "再生"}</button>}
         </div>
         <div className="model-help">左ドラッグ：回転　右ドラッグ：移動　ホイール：ズーム</div>

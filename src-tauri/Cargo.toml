@@ -1,6 +1,6 @@
 [package]
 name = "be-asset-optimizer"
-version = "0.2.0"
+version = "0.2.1"
 description = "Blender-oriented texture and 3D asset optimizer"
 authors = ["Be Asset Optimizer contributors"]
 edition = "2021"

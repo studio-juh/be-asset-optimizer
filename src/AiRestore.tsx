@@ -17,7 +17,7 @@ const label = (status: Status) => ({ ready: "準備完了", processing: "復元�
 export default function AiRestore() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [outputDir, setOutputDir] = useState("");
-  const [outputScale, setOutputScale] = useState<1 | 2 | 4>(2);
+  const [outputScale, setOutputScale] = useState<1 | 2 | 4>(1);
   const [tileSize, setTileSize] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -83,7 +83,7 @@ export default function AiRestore() {
     <aside className="settings ai-restore-settings">
       <h2>AI復元設定</h2>
       <label>出力先<div className="path-row"><input value={outputDir} onChange={(event) => setOutputDir(event.target.value)} placeholder="入力元 / ai_restored" /><button onClick={chooseOutput}>選択</button></div></label>
-      <fieldset><legend>復元方法</legend><label>出力倍率<select value={outputScale} onChange={(event) => setOutputScale(Number(event.target.value) as 1 | 2 | 4)}><option value={1}>元の寸法（復元のみ）</option><option value={2}>2倍（既定）</option><option value={4}>4倍</option></select></label><label>GPUメモリ<select value={tileSize} onChange={(event) => setTileSize(Number(event.target.value))}><option value={0}>自動（推奨）</option><option value={128}>少なめ</option><option value={256}>標準</option><option value={512}>高速</option></select></label><p className="mode-note">一般画像向け Real-ESRGAN を使用します。GPUメモリ不足になる場合は「少なめ」を選んでください。</p></fieldset>
+      <fieldset><legend>復元方法</legend><label>出力倍率<select value={outputScale} onChange={(event) => setOutputScale(Number(event.target.value) as 1 | 2 | 4)}><option value={1}>元の寸法（既定）</option><option value={2}>2倍</option><option value={4}>4倍</option></select></label><label>GPUメモリ<select value={tileSize} onChange={(event) => setTileSize(Number(event.target.value))}><option value={0}>自動（推奨）</option><option value={128}>少なめ</option><option value={256}>標準</option><option value={512}>高速</option></select></label><p className="mode-note">一般画像向け Real-ESRGAN を使用します。GPUメモリ不足になる場合は「少なめ」を選んでください。</p></fieldset>
       <p className="hint">アルベドや写真素材向けです。ノーマル、粗さ、金属、マスクには直接使わず、必要なら復元したアルベドから作り直してください。元ファイルは変更しません。</p>
     </aside>
     <section className="queue">

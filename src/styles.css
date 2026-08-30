@@ -15,7 +15,7 @@ main { display: flex; flex-direction: column; gap: 12px; }
 .display-scale { display: flex; align-items: center; gap: 6px; margin-left: auto; color: #8f9bb1; font-size: 11px; }
 .display-scale select { width: 94px; padding: 5px 8px; font-size: 11px; }
 .workspace { grid-template-columns: 288px minmax(0, 1fr); flex: 1 1 auto; height: auto; min-height: 0; }
-.settings { overflow: hidden; }
+.settings { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .queue { min-height: 0; display: flex; flex-direction: column; }
 .queue-toolbar, .table-header, .queue-footer { flex: 0 0 auto; }
 .rows { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
@@ -53,6 +53,7 @@ main { display: flex; flex-direction: column; gap: 12px; }
 .file > div { flex: 1 1 auto; min-width: 0; }
 .file strong, .file small { max-width: 100%; }
 .mode-note { color: #7f8aa0; font-size: 10px; line-height: 1.5; margin-top: 10px; }
+.actions .primary.convert-start, [data-theme="light"] .actions .primary.convert-start { background: #23865f; border-color: #23865f; color: #ffffff; }
 
 /* 100%表示でも情報量を保ったまま収まる、デスクトップ向けの高密度レイアウト。 */
 main { padding: 14px 16px; gap: 8px; }
