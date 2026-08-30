@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import Thumbnail from "./Thumbnail";
-import { InspectProgress, InspectResult, supportedImageFilter } from "./imageFiles";
+import { InspectProgress, InspectResult, supportedImageFilter, supportedImageShortLabel } from "./imageFiles";
 
 type Status = "ready" | "processing" | "done" | "skipped" | "failed";
 type Job = { id: string; path: string; name: string; originalBytes: number; width: number; height: number; status: Status; outputBytes?: number; outputWidth?: number; outputHeight?: number; message?: string; outputPath?: string };
@@ -28,7 +28,7 @@ export default function NormalMap() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const loadingRequestId = useRef("");
-  const [notice, setNotice] = useState("高さマップ用 PNG / HEIC をここへドロップしてください");
+  const [notice, setNotice] = useState(`高さマップ用の${supportedImageShortLabel}をここへドロップしてください`);
 
   const addPaths = async (paths: string[]) => {
     if (!paths.length) return;
@@ -91,8 +91,8 @@ export default function NormalMap() {
       <p className="hint">出力は Blender 向け RGB 24-bit（アルファなし）です。明るい部分を高く、暗い部分を低く扱います。Blender では Image Texture → Normal Map ノード経由で接続してください。</p>
     </aside>
     <section className="queue">
-      <div className="queue-toolbar"><div><h2>ノーマルマップ一覧 <span>{jobs.length}</span></h2><p>{notice}</p></div><div className="actions"><button className="secondary" onClick={chooseFiles} disabled={isProcessing || isLoading}>ファイルを追加</button><button className="primary" onClick={run} disabled={!jobs.length || isProcessing || isLoading}>{isLoading ? "読込中…" : isProcessing ? "生成中…" : "生成を開始"}</button></div></div>
-      {jobs.length === 0 ? <button className="drop-zone" onClick={chooseFiles} disabled={isLoading}><strong>高さマップ PNG / HEIC またはフォルダーをドロップ</strong><span>明度から Blender 用ノーマルマップを生成</span></button> : <><div className="table-header normal-table"><span>ファイル</span><span>寸法</span><span>出力サイズ</span><span>状態</span><span></span></div><div className="rows">{jobs.map((job) => <div className="job-row normal-table" key={job.id}><div className="file"><Thumbnail path={job.path} alt={`${job.name} のプレビュー`} fallbackLabel="N" /><div><strong title={job.path}>{job.name}</strong><small>{job.message || job.path}</small></div></div><span>{job.width} × {job.height}</span><span>{formatBytes(job.outputBytes)}</span><span className={`badge ${job.status}`}>{label(job.status)}</span><div className="row-actions">{job.outputPath && <button title="出力先を開く" onClick={() => openPath(job.outputPath!)}>開く</button>}<button title="リストから削除" onClick={() => setJobs((items) => items.filter((item) => item.id !== job.id))} disabled={job.status === "processing"}>×</button></div></div>)}</div><div className="queue-footer"><div className="footer-actions"><button onClick={() => setJobs([])} disabled={isProcessing || isLoading}>リストをクリア</button><button onClick={() => setJobs((items) => items.map(({ outputBytes, outputWidth, outputHeight, message, outputPath, ...job }) => ({ ...job, status: "ready" })))} disabled={isProcessing || isLoading}>変換ステータスをクリア</button></div><span>{jobs.filter((job) => job.status === "done").length} 件完了 / {jobs.filter((job) => job.status === "failed").length} 件失敗</span></div></>}
+      <div className="queue-toolbar"><div><h2>ノーマルマップ一覧 <span>{jobs.length}</span></h2><p>{notice}</p></div><div className="actions"><button className="secondary" onClick={chooseFiles} disabled={isProcessing || isLoading}>ファイルを追加</button><button className="secondary" onClick={() => setJobs((items) => items.map(({ outputBytes, outputWidth, outputHeight, message, outputPath, ...job }) => ({ ...job, status: "ready" })))} disabled={!jobs.length || isProcessing || isLoading}>変換ステータスをクリア</button><button className="primary" onClick={run} disabled={!jobs.length || isProcessing || isLoading}>{isLoading ? "読込中…" : isProcessing ? "生成中…" : "生成を開始"}</button></div></div>
+      {jobs.length === 0 ? <button className="drop-zone" onClick={chooseFiles} disabled={isLoading}><strong>高さマップ画像またはフォルダーをドロップ</strong><span>明度から Blender 用ノーマルマップを生成</span></button> : <><div className="table-header normal-table"><span>ファイル</span><span>寸法</span><span>出力サイズ</span><span>状態</span><span></span></div><div className="rows">{jobs.map((job) => <div className="job-row normal-table" key={job.id}><div className="file"><Thumbnail path={job.path} alt={`${job.name} のプレビュー`} fallbackLabel="N" /><div><strong title={job.path}>{job.name}</strong><small>{job.message || job.path}</small></div></div><span>{job.width} × {job.height}</span><span>{formatBytes(job.outputBytes)}</span><span className={`badge ${job.status}`}>{label(job.status)}</span><div className="row-actions">{job.outputPath && <button title="エクスプローラーで出力ファイルを表示" onClick={() => revealItemInDir(job.outputPath!)}>開く</button>}<button title="リストから削除" onClick={() => setJobs((items) => items.filter((item) => item.id !== job.id))} disabled={job.status === "processing"}>×</button></div></div>)}</div><div className="queue-footer"><div className="footer-actions"><button onClick={() => setJobs([])} disabled={isProcessing || isLoading}>リストをクリア</button></div><span>{jobs.filter((job) => job.status === "done").length} 件完了 / {jobs.filter((job) => job.status === "failed").length} 件失敗</span></div></>}
     </section>
   </section>;
 }

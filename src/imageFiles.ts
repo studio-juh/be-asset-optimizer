@@ -1,7 +1,12 @@
-export const supportedImageExtensions = ["png", "heic", "heif"];
+export const supportedImageExtensions = [
+  "png", "jpg", "jpeg", "jfif", "webp", "heic", "heif",
+  "bmp", "tif", "tiff", "gif", "tga", "dds",
+];
+
+export const supportedImageShortLabel = "PNG / JPEG / WebP / HEIC などの画像";
 
 export const supportedImageFilter = {
-  name: "画像（PNG / HEIC）",
+  name: "画像（主要な静止画形式）",
   extensions: supportedImageExtensions,
 };
 

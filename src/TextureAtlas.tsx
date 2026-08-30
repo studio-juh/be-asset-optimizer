@@ -2,8 +2,8 @@ import { DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { openPath } from "@tauri-apps/plugin-opener";
-import { InspectProgress, InspectResult, supportedImageFilter } from "./imageFiles";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { InspectProgress, InspectResult, supportedImageFilter, supportedImageShortLabel } from "./imageFiles";
 
 type Texture = { path: string; name: string; originalBytes: number; width: number; height: number };
 type AtlasResult = { outputPath: string; outputBytes: number; width: number; height: number };
@@ -40,7 +40,7 @@ function AtlasTile({ slot, texture, index, disabled, highlighted, onMove, onRemo
 
   return <div data-atlas-index={index} className={`atlas-slot ${texture ? "filled" : ""} ${highlighted ? "drop-target" : ""}`} onDragOver={acceptInternalDrop} onDrop={dropInternal}>
     <div className="atlas-tile-bar"><strong>{slot}</strong>{texture && <div className="atlas-actions"><button title="前の枠と入れ替え" onClick={() => onMove(-1)} disabled={disabled || index === 0}>←</button><button title="次の枠と入れ替え" onClick={() => onMove(1)} disabled={disabled || index === 3}>→</button><button title="この画像を外す" onClick={onRemove} disabled={disabled}>×</button></div>}</div>
-    {texture ? <><div className="atlas-tile-preview" draggable={!disabled} onDragStart={startInternalDrag} onDragEnd={onInternalDragEnd}>{preview ? <img src={preview} alt={`${slot}: ${texture.name}`} draggable={false} /> : <span>読込中…</span>}</div><div className="atlas-tile-caption" title={texture.path}><strong>{texture.name}</strong><small>{texture.width} × {texture.height}</small></div></> : <button className="atlas-empty" onClick={onAdd} disabled={disabled}><strong>ここへ画像をドロップ</strong><small>PNG / HEIC</small></button>}
+    {texture ? <><div className="atlas-tile-preview" draggable={!disabled} onDragStart={startInternalDrag} onDragEnd={onInternalDragEnd}>{preview ? <img src={preview} alt={`${slot}: ${texture.name}`} draggable={false} /> : <span>読込中…</span>}</div><div className="atlas-tile-caption" title={texture.path}><strong>{texture.name}</strong><small>{texture.width} × {texture.height}</small></div></> : <button className="atlas-empty" onClick={onAdd} disabled={disabled}><strong>ここへ画像をドロップ</strong><small>主要な静止画形式</small></button>}
   </div>;
 }
 
@@ -55,7 +55,7 @@ export default function TextureAtlas() {
   const [isLoading, setIsLoading] = useState(false);
   const loadingRequestId = useRef("");
   const [dropTarget, setDropTarget] = useState<number>();
-  const [notice, setNotice] = useState("PNG / HEIC を任意の枠へドロップしてください。");
+  const [notice, setNotice] = useState(`${supportedImageShortLabel}を任意の枠へドロップしてください。`);
   const textureCount = useMemo(() => textures.filter(Boolean).length, [textures]);
 
   const addPaths = async (paths: string[], targetIndex?: number) => {
@@ -152,7 +152,7 @@ export default function TextureAtlas() {
     <section className="queue">
       <div className="queue-toolbar"><div><h2>テクスチャアトラス <span>{textureCount} / 4</span></h2><p>{result ? `${result.width} × ${result.height} · ${formatBytes(result.outputBytes)}` : notice}</p></div><div className="actions"><button className="secondary" onClick={chooseFiles} disabled={isCreating || isLoading || textureCount === 4}>画像を追加</button><button className="primary" onClick={create} disabled={textureCount !== 4 || isCreating || isLoading}>{isLoading ? "読込中…" : isCreating ? "作成中…" : "アトラスを作成"}</button></div></div>
       <div className="atlas-grid">{slots.map((slot, index) => <AtlasTile key={slot} slot={slot} texture={textures[index]} index={index} disabled={isCreating || isLoading} highlighted={dropTarget === index} onMove={(direction) => swap(index, index + direction)} onRemove={() => { setTextures((items) => items.map((item, itemIndex) => itemIndex === index ? undefined : item)); setResult(undefined); }} onAdd={chooseFiles} onInternalDragStart={() => setDropTarget(index)} onInternalDragOver={() => setDropTarget(index)} onInternalDragEnd={() => setDropTarget(undefined)} onInternalDrop={(source) => { swap(source, index); setDropTarget(undefined); }} />)}</div>
-      <div className="queue-footer"><div className="footer-actions"><button onClick={() => { setTextures(emptyTextures()); setResult(undefined); setNotice("PNG / HEIC を任意の枠へドロップしてください"); }} disabled={isCreating || textureCount === 0}>リストをクリア</button>{result && <button onClick={() => openPath(result.outputPath)}>出力を開く</button>}</div><span>{notice}</span></div>
+      <div className="queue-footer"><div className="footer-actions"><button onClick={() => { setTextures(emptyTextures()); setResult(undefined); setNotice(`${supportedImageShortLabel}を任意の枠へドロップしてください`); }} disabled={isCreating || textureCount === 0}>リストをクリア</button>{result && <button onClick={() => revealItemInDir(result.outputPath)}>出力を開く</button>}</div><span>{notice}</span></div>
     </section>
   </section>;
 }

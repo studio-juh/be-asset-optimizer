@@ -12,7 +12,7 @@ use std::{
 use std::os::windows::process::CommandExt;
 use bytemuck::cast_slice;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use image::{imageops::FilterType, GenericImageView, ImageEncoder};
+use image::{imageops::FilterType, GenericImageView, ImageDecoder, ImageEncoder};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
@@ -57,7 +57,7 @@ struct NormalSettings { output_dir: Option<String>, max_long_edge: Option<u32>, 
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AiRestoreSettings { output_dir: Option<String>, output_scale: u32, tile_size: Option<u32> }
+struct AiRestoreSettings { output_dir: Option<String>, output_scale: u32, tile_size: Option<u32>, seamless_tiles: bool }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -77,6 +77,20 @@ struct ModelPackage { path: String, name: String, bytes_base64: String, file_byt
 
 #[derive(Clone)]
 struct CachedHeicPreview { file_bytes: u64, modified: Option<SystemTime>, width: u32, height: u32, image: image::RgbaImage }
+
+#[derive(Clone)]
+struct AiTileSpec {
+  core_x: u32,
+  core_y: u32,
+  core_width: u32,
+  core_height: u32,
+  input_x: u32,
+  input_y: u32,
+  input_width: u32,
+  input_height: u32,
+  input_path: PathBuf,
+  output_path: PathBuf,
+}
 
 static HEIC_PREVIEW_CACHE: OnceLock<Mutex<HashMap<PathBuf, CachedHeicPreview>>> = OnceLock::new();
 
@@ -269,7 +283,7 @@ async fn create_texture_atlas(paths: Vec<String>, settings: AtlasSettings) -> Re
     let mut images = Vec::with_capacity(4);
     for path in &paths {
       let path = PathBuf::from(path);
-      if !is_supported_image(&path) { return Err("PNGまたはHEICファイルを4枚指定してください".into()); }
+      if !is_supported_image(&path) { return Err("対応している画像ファイルを4枚指定してください".into()); }
       images.push(load_input_image(&path)?.to_rgba8());
     }
     let atlas = build_texture_atlas(&images, settings.pad_to_square, settings.square_resolution)?;
@@ -324,8 +338,227 @@ fn resolve_realesrgan_runtime(app: &AppHandle) -> Result<RealEsrganRuntime, Stri
   Err("AI復元モデルが見つかりません。アプリを再インストールしてください".into())
 }
 
+fn run_realesrgan(runtime: &RealEsrganRuntime, input: &Path, output: &Path, tile_size: u32) -> Result<(), String> {
+  let mut command = Command::new(&runtime.executable);
+  command
+    .current_dir(&runtime.working_dir)
+    .arg("-i").arg(input)
+    .arg("-o").arg(output)
+    .arg("-s").arg("4")
+    .arg("-t").arg(tile_size.to_string())
+    .arg("-m").arg("models")
+    .arg("-n").arg("realesrgan-x4plus")
+    .arg("-f").arg("png");
+  command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+  #[cfg(windows)]
+  command.creation_flags(0x0800_0000);
+
+  match command.output().map_err(|error| format!("AI復元エンジンを起動できません: {error}"))? {
+    output if output.status.success() => Ok(()),
+    output => {
+      let details = String::from_utf8_lossy(&output.stderr);
+      if details.contains("vkCreate") || details.contains("gpu") || details.contains("GPU") {
+        Err("AI復元を実行できません。GPUドライバーがVulkanに対応しているか確認してください".into())
+      } else {
+        let details = details.lines().rev().find(|line| !line.trim().is_empty()).unwrap_or("不明なエラー");
+        Err(format!("AI復元に失敗しました: {details}"))
+      }
+    }
+  }
+}
+
+fn build_ai_tiles(source_width: u32, source_height: u32, core_size: u32, overlap: u32, input_dir: &Path, output_dir: &Path) -> Vec<Vec<AiTileSpec>> {
+  let columns = source_width.div_ceil(core_size) as usize;
+  let rows = source_height.div_ceil(core_size) as usize;
+  (0..rows).map(|row| {
+    (0..columns).map(|column| {
+      let core_x = column as u32 * core_size;
+      let core_y = row as u32 * core_size;
+      let core_width = core_size.min(source_width - core_x);
+      let core_height = core_size.min(source_height - core_y);
+      let input_x = core_x.saturating_sub(overlap);
+      let input_y = core_y.saturating_sub(overlap);
+      let input_right = source_width.min(core_x + core_width + overlap);
+      let input_bottom = source_height.min(core_y + core_height + overlap);
+      let name = format!("tile-{row:04}-{column:04}.png");
+      AiTileSpec {
+        core_x,
+        core_y,
+        core_width,
+        core_height,
+        input_x,
+        input_y,
+        input_width: input_right - input_x,
+        input_height: input_bottom - input_y,
+        input_path: input_dir.join(&name),
+        output_path: output_dir.join(name),
+      }
+    }).collect()
+  }).collect()
+}
+
+fn ai_tile_pixel(tile: &AiTileSpec, image: &image::RgbaImage, global_x: u32, global_y: u32) -> image::Rgba<u8> {
+  let local_x = global_x - tile.input_x * 4;
+  let local_y = global_y - tile.input_y * 4;
+  *image.get_pixel(local_x, local_y)
+}
+
+fn blend_rgba(first: image::Rgba<u8>, second: image::Rgba<u8>, amount: f32) -> image::Rgba<u8> {
+  let amount = amount.clamp(0.0, 1.0);
+  let inverse = 1.0 - amount;
+  image::Rgba(std::array::from_fn(|index| (first[index] as f32 * inverse + second[index] as f32 * amount).round() as u8))
+}
+
+fn fade_amount(position: u32, start: u32, end: u32) -> f32 {
+  if end <= start + 1 { 0.5 } else { (position - start) as f32 / (end - start - 1) as f32 }
+}
+
+fn stitch_ai_tiles(tiles: &[Vec<AiTileSpec>], source_width: u32, source_height: u32, overlap: u32, output_path: &Path, scaled_alpha: Option<&image::GrayImage>) -> Result<(), String> {
+  let output_width = source_width.checked_mul(4).ok_or("AI復元結果の幅が大きすぎます")?;
+  let output_height = source_height.checked_mul(4).ok_or("AI復元結果の高さが大きすぎます")?;
+  let mut canvas = image::RgbaImage::new(output_width, output_height);
+
+  // First copy each non-overlapping core. Seam bands are replaced below.
+  for row in tiles {
+    for tile in row {
+      let processed = image::open(&tile.output_path)
+        .map_err(|error| format!("AI復元タイルを読み込めません ({}): {error}", tile.output_path.display()))?
+        .to_rgba8();
+      let core_start_x = tile.core_x * 4;
+      let core_start_y = tile.core_y * 4;
+      let core_end_x = (tile.core_x + tile.core_width) * 4;
+      let core_end_y = (tile.core_y + tile.core_height) * 4;
+      for y in core_start_y..core_end_y {
+        for x in core_start_x..core_end_x {
+          canvas.put_pixel(x, y, ai_tile_pixel(tile, &processed, x, y));
+        }
+      }
+    }
+  }
+
+  let overlap_scaled = overlap * 4;
+
+  // Blend the two independent predictions across every vertical boundary.
+  for row in tiles {
+    for column in 1..row.len() {
+      let left = &row[column - 1];
+      let right = &row[column];
+      let boundary = right.core_x * 4;
+      let start = boundary.saturating_sub(overlap_scaled);
+      let end = output_width.min(boundary + overlap_scaled);
+      let y_start = right.core_y * 4;
+      let y_end = (right.core_y + right.core_height) * 4;
+      let left_image = image::open(&left.output_path).map_err(|error| format!("AI復元タイルを読み込めません: {error}"))?.to_rgba8();
+      let right_image = image::open(&right.output_path).map_err(|error| format!("AI復元タイルを読み込めません: {error}"))?.to_rgba8();
+      for y in y_start..y_end {
+        for x in start..end {
+          let amount = fade_amount(x, start, end);
+          canvas.put_pixel(x, y, blend_rgba(ai_tile_pixel(left, &left_image, x, y), ai_tile_pixel(right, &right_image, x, y), amount));
+        }
+      }
+    }
+  }
+
+  // Blend across horizontal boundaries. Four-way intersections are corrected next.
+  for row_index in 1..tiles.len() {
+    for column in 0..tiles[row_index].len() {
+      let top = &tiles[row_index - 1][column];
+      let bottom = &tiles[row_index][column];
+      let boundary = bottom.core_y * 4;
+      let start = boundary.saturating_sub(overlap_scaled);
+      let end = output_height.min(boundary + overlap_scaled);
+      let x_start = bottom.core_x * 4;
+      let x_end = (bottom.core_x + bottom.core_width) * 4;
+      let top_image = image::open(&top.output_path).map_err(|error| format!("AI復元タイルを読み込めません: {error}"))?.to_rgba8();
+      let bottom_image = image::open(&bottom.output_path).map_err(|error| format!("AI復元タイルを読み込めません: {error}"))?.to_rgba8();
+      for y in start..end {
+        let amount = fade_amount(y, start, end);
+        for x in x_start..x_end {
+          canvas.put_pixel(x, y, blend_rgba(ai_tile_pixel(top, &top_image, x, y), ai_tile_pixel(bottom, &bottom_image, x, y), amount));
+        }
+      }
+    }
+  }
+
+  // At tile intersections use a true bilinear blend of all four predictions.
+  for row in 1..tiles.len() {
+    for column in 1..tiles[row].len() {
+      let top_left = &tiles[row - 1][column - 1];
+      let top_right = &tiles[row - 1][column];
+      let bottom_left = &tiles[row][column - 1];
+      let bottom_right = &tiles[row][column];
+      let boundary_x = bottom_right.core_x * 4;
+      let boundary_y = bottom_right.core_y * 4;
+      let start_x = boundary_x.saturating_sub(overlap_scaled);
+      let end_x = output_width.min(boundary_x + overlap_scaled);
+      let start_y = boundary_y.saturating_sub(overlap_scaled);
+      let end_y = output_height.min(boundary_y + overlap_scaled);
+      let top_left_image = image::open(&top_left.output_path).map_err(|error| format!("AI復元タイルを読み込めません: {error}"))?.to_rgba8();
+      let top_right_image = image::open(&top_right.output_path).map_err(|error| format!("AI復元タイルを読み込めません: {error}"))?.to_rgba8();
+      let bottom_left_image = image::open(&bottom_left.output_path).map_err(|error| format!("AI復元タイルを読み込めません: {error}"))?.to_rgba8();
+      let bottom_right_image = image::open(&bottom_right.output_path).map_err(|error| format!("AI復元タイルを読み込めません: {error}"))?.to_rgba8();
+      for y in start_y..end_y {
+        let amount_y = fade_amount(y, start_y, end_y);
+        for x in start_x..end_x {
+          let amount_x = fade_amount(x, start_x, end_x);
+          let top = blend_rgba(ai_tile_pixel(top_left, &top_left_image, x, y), ai_tile_pixel(top_right, &top_right_image, x, y), amount_x);
+          let bottom = blend_rgba(ai_tile_pixel(bottom_left, &bottom_left_image, x, y), ai_tile_pixel(bottom_right, &bottom_right_image, x, y), amount_x);
+          canvas.put_pixel(x, y, blend_rgba(top, bottom, amount_y));
+        }
+      }
+    }
+  }
+
+  if let Some(alpha) = scaled_alpha {
+    for (x, y, pixel) in canvas.enumerate_pixels_mut() {
+      pixel[3] = alpha.get_pixel(x, y)[0];
+    }
+  }
+  let encoded = if scaled_alpha.is_some() { encode_rgba(&canvas, output_width, output_height)? } else { encode_rgb24(&canvas, output_width, output_height)? };
+  fs::write(output_path, encoded).map_err(|error| format!("AI復元結果を合成できません: {error}"))
+}
+
+fn process_ai_restore_seamless(input_path: &Path, output_path: &Path, temporary_dir: &Path, source_width: u32, source_height: u32, core_size: u32, runtime: &RealEsrganRuntime) -> Result<(), String> {
+  let input_dir = temporary_dir.join("tiles-input");
+  let output_dir = temporary_dir.join("tiles-output");
+  fs::create_dir_all(&input_dir).map_err(|error| format!("AI復元タイル用フォルダーを作成できません: {error}"))?;
+  fs::create_dir_all(&output_dir).map_err(|error| format!("AI復元タイル用フォルダーを作成できません: {error}"))?;
+  // 24 px on each side gives a 48 px shared blend band. Larger 608 px
+  // padded tiles can silently turn black on some Vulkan drivers/GPUs.
+  let overlap = 24.min(core_size / 4);
+  let source = image::open(input_path).map_err(|error| format!("AI復元用画像を読み込めません: {error}"))?;
+  let has_alpha = source.color().has_alpha();
+  let source = source.to_rgba8();
+  let scaled_width = source_width.checked_mul(4).ok_or("AI復元結果の幅が大きすぎます")?;
+  let scaled_height = source_height.checked_mul(4).ok_or("AI復元結果の高さが大きすぎます")?;
+  let scaled_alpha = has_alpha.then(|| {
+    let alpha = image::GrayImage::from_fn(source_width, source_height, |x, y| image::Luma([source.get_pixel(x, y)[3]]));
+    image::imageops::resize(&alpha, scaled_width, scaled_height, FilterType::Lanczos3)
+  });
+  let tiles = build_ai_tiles(source_width, source_height, core_size, overlap, &input_dir, &output_dir);
+  for row in &tiles {
+    for tile in row {
+      let cropped = image::imageops::crop_imm(&source, tile.input_x, tile.input_y, tile.input_width, tile.input_height).to_image();
+      // The bundled NCNN runner can lose alpha after the first image in a
+      // directory batch. Infer RGB only, then restore the original alpha mask.
+      let encoded = encode_rgb_channels(&cropped, tile.input_width, tile.input_height)?;
+      fs::write(&tile.input_path, encoded).map_err(|error| format!("AI復元タイルを準備できません: {error}"))?;
+    }
+  }
+  // This bundled runner produces invalid images for some directory batches,
+  // especially when alpha is involved. Process each padded tile explicitly.
+  for row in &tiles {
+    for tile in row {
+      // Keep the engine's own tile size slightly larger than the padded input.
+      // An exact square match can yield an empty/black tile in this NCNN build.
+      run_realesrgan(runtime, &tile.input_path, &tile.output_path, core_size + overlap * 2 + 32)?;
+    }
+  }
+  stitch_ai_tiles(&tiles, source_width, source_height, overlap, output_path, scaled_alpha.as_ref())
+}
+
 fn process_ai_restore_file(path: &Path, settings: &AiRestoreSettings, runtime: &RealEsrganRuntime) -> Result<(Status, Option<u64>, u32, u32, Option<String>, Option<String>), String> {
-  if !is_supported_image(path) { return Err("PNGまたはHEICファイルではありません".into()); }
+  if !is_supported_image(path) { return Err("対応している画像ファイルではありません".into()); }
   if !path.is_file() { return Err("入力画像を開けません".into()); }
   if !matches!(settings.output_scale, 1 | 2 | 4) { return Err("出力倍率が正しくありません".into()); }
   if settings.tile_size.is_some_and(|value| value != 0 && value < 32) { return Err("タイルサイズは自動または32 px以上にしてください".into()); }
@@ -344,48 +577,25 @@ fn process_ai_restore_file(path: &Path, settings: &AiRestoreSettings, runtime: &
     let has_alpha = source.color().has_alpha();
     let source = source.to_rgba8();
     let encoded = if has_alpha { encode_rgba(&source, source.width(), source.height())? } else { encode_rgb24(&source, source.width(), source.height())? };
-    fs::write(&temporary_input, encoded).map_err(|error| format!("HEICを処理用PNGへ変換できません: {error}"))?;
+    fs::write(&temporary_input, encoded).map_err(|error| format!("画像を処理用PNGへ変換できません: {error}"))?;
   }
 
-  let model_scale = if settings.output_scale == 1 { 4 } else { settings.output_scale };
-  let mut command = Command::new(&runtime.executable);
-  command
-    .current_dir(&runtime.working_dir)
-    .arg("-i").arg(&temporary_input)
-    .arg("-o").arg(&temporary_output)
-    .arg("-s").arg(model_scale.to_string())
-    .arg("-t").arg(settings.tile_size.unwrap_or(0).to_string())
-    .arg("-m").arg("models")
-    .arg("-n").arg("realesrgan-x4plus")
-    .arg("-f").arg("png")
-    .stdin(Stdio::null())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped());
-  #[cfg(windows)]
-  command.creation_flags(0x0800_0000);
-
-  let result = command.output().map_err(|error| format!("AI復元エンジンを起動できません: {error}"));
-  let engine_result = match result {
-    Ok(output) if output.status.success() => Ok(()),
-    Ok(output) => {
-      let details = String::from_utf8_lossy(&output.stderr);
-      let message = if details.contains("vkCreate") || details.contains("gpu") || details.contains("GPU") {
-        "AI復元を実行できません。GPUドライバーがVulkanに対応しているか確認してください".into()
-      } else {
-        let details = details.lines().rev().find(|line| !line.trim().is_empty()).unwrap_or("不明なエラー");
-        format!("AI復元に失敗しました: {details}")
-      };
-      Err(message)
-    }
-    Err(error) => Err(error),
+  // realesrgan-x4plus is a native 4x model. Always infer at 4x and downsample
+  // once for 1x/2x. In seamless mode, overlapping predictions are feathered
+  // externally because the NCNN runner's internal tile padding is too narrow.
+  let tile_size = settings.tile_size.unwrap_or(512);
+  let engine_result = if settings.seamless_tiles && tile_size > 0 {
+    process_ai_restore_seamless(&temporary_input, &temporary_output, &temporary_dir, source_width, source_height, tile_size, runtime)
+  } else {
+    run_realesrgan(runtime, &temporary_input, &temporary_output, tile_size)
   };
   if let Err(error) = engine_result {
     let _ = fs::remove_dir_all(&temporary_dir);
     return Err(error);
   }
 
-  // 2倍・4倍はNCNNが出力したPNGをそのまま保存する。従来行っていた
-  // CPUでの全画素デコード、再エンコード、OxiPNG最適化は不要。
+  // 4倍はNCNNが出力したPNGをそのまま保存する。1倍・2倍は、4倍専用
+  // モデルの正常な出力からLanczosで目的寸法へ縮小する。
   let save_result = (|| {
     let output_dir = if let Some(dir) = settings.output_dir.as_deref().filter(|value| !value.trim().is_empty()) {
       PathBuf::from(dir)
@@ -396,28 +606,28 @@ fn process_ai_restore_file(path: &Path, settings: &AiRestoreSettings, runtime: &
     let suffix = match settings.output_scale { 1 => "ai-restored", 2 => "ai-x2", _ => "ai-x4" };
     let output_path = unique_named_output_path(&output_dir, path.file_stem().and_then(|value| value.to_str()).unwrap_or("image"), suffix);
 
-    if settings.output_scale != 1 {
+    if settings.output_scale == 4 {
       let (width, height) = image::image_dimensions(&temporary_output).map_err(|error| format!("AI復元結果を確認できません: {error}"))?;
       let output_bytes = fs::copy(&temporary_output, &output_path).map_err(|error| format!("AI復元結果を保存できません: {error}"))?;
-      let message = if settings.output_scale == 2 { "AI復元して2倍に拡大しました" } else { "AI復元して4倍に拡大しました" };
-      return Ok((Status::Done, Some(output_bytes), width, height, Some(message.into()), Some(output_path.to_string_lossy().to_string())));
+      return Ok((Status::Done, Some(output_bytes), width, height, Some("AI復元して4倍に拡大しました".into()), Some(output_path.to_string_lossy().to_string())));
     }
 
-    // 元寸法モードだけは4倍のAI出力を縮小する必要がある。PNGは一度だけ
-    // 高速エンコードし、重いOxiPNG処理は画像最適化タブへ任せる。
+    let output_width = source_width.checked_mul(settings.output_scale).ok_or("出力幅が大きすぎます")?;
+    let output_height = source_height.checked_mul(settings.output_scale).ok_or("出力高が大きすぎます")?;
     let processed = image::open(&temporary_output).map_err(|error| format!("AI復元結果を読み込めません: {error}"))?;
     let has_alpha = processed.color().has_alpha();
-    let output = processed.resize_exact(source_width, source_height, FilterType::Lanczos3).to_rgba8();
-    let encoded = if has_alpha { encode_rgba(&output, source_width, source_height)? } else { encode_rgb24(&output, source_width, source_height)? };
+    let output = processed.resize_exact(output_width, output_height, FilterType::Lanczos3).to_rgba8();
+    let encoded = if has_alpha { encode_rgba(&output, output_width, output_height)? } else { encode_rgb24(&output, output_width, output_height)? };
     fs::write(&output_path, &encoded).map_err(|error| format!("AI復元結果を保存できません: {error}"))?;
-    Ok((Status::Done, Some(encoded.len() as u64), source_width, source_height, Some("AI復元後、元の寸法に戻しました".into()), Some(output_path.to_string_lossy().to_string())))
+    let message = if settings.output_scale == 2 { "AI復元して2倍に拡大しました" } else { "AI復元後、元の寸法に戻しました" };
+    Ok((Status::Done, Some(encoded.len() as u64), output_width, output_height, Some(message.into()), Some(output_path.to_string_lossy().to_string())))
   })();
   let _ = fs::remove_dir_all(&temporary_dir);
   save_result
 }
 
 fn process_file(path: &Path, settings: &Settings) -> Result<(Status, Option<u64>, u32, u32, Option<String>, Option<String>), String> {
-  if !is_supported_image(path) { return Err("PNGまたはHEICファイルではありません".into()); }
+  if !is_supported_image(path) { return Err("対応している画像ファイルではありません".into()); }
   let original = fs::read(path).map_err(|error| error.to_string())?;
   if is_png(path) && original.windows(4).any(|chunk| chunk == b"acTL") { return Err("APNG は MVP では未対応です".into()); }
   let source = load_input_image_from_bytes(path, &original)?;
@@ -429,8 +639,8 @@ fn process_file(path: &Path, settings: &Settings) -> Result<(Status, Option<u64>
 
   let quality = settings.quality.clamp(1, 100);
   let (optimized, extension, message, skip_when_larger) = match settings.output_format.as_str() {
-    "webp" => (encode_webp(&rgba, width, height, quality)?, "webp", "WebPに変換しました", false),
-    "jpeg" | "jpg" => (encode_jpeg(&rgba, width, height, quality, &settings.jpeg_background)?, "jpg", "JPEGに変換しました", false),
+    "webp" => (encode_webp(&rgba, width, height, quality)?, "webp", "WebPに変換しました".to_string(), false),
+    "jpeg" | "jpg" => (encode_jpeg(&rgba, width, height, quality, &settings.jpeg_background)?, "jpg", "JPEGに変換しました".to_string(), false),
     _ => {
       let (encoded, fell_back_to_lossless) = match settings.color_mode.as_str() {
         "indexed" => match encode_indexed(&rgba, width, height, settings.colors.unwrap_or(256), settings.dithering) {
@@ -449,7 +659,13 @@ fn process_file(path: &Path, settings: &Settings) -> Result<(Status, Option<u64>
       let preset = match settings.optimization.as_str() { "max" => 6, "safe" => 1, _ => 0 };
       let options = lossless_options(preset);
       let optimized = oxipng::optimize_from_memory(&encoded, &options).map_err(|error| error.to_string())?;
-      let message = if fell_back_to_lossless { "PNG-8では品質が保てないため、可逆PNGで保存しました" } else if is_heic(path) { "HEICをPNGに変換しました" } else { "PNGを最適化しました" };
+      let message = if fell_back_to_lossless {
+        "PNG-8では品質が保てないため、可逆PNGで保存しました".to_string()
+      } else if is_png(path) {
+        "PNGを最適化しました".to_string()
+      } else {
+        format!("{}をPNGに変換しました", input_format_name(path))
+      };
       (optimized, "png", message, true)
     }
   };
@@ -460,11 +676,11 @@ fn process_file(path: &Path, settings: &Settings) -> Result<(Status, Option<u64>
   fs::create_dir_all(&output_dir).map_err(|error| error.to_string())?;
   let output_path = unique_output_path(&output_dir, path.file_stem().and_then(|v| v.to_str()).unwrap_or("image"), extension);
   fs::write(&output_path, optimized.as_slice()).map_err(|error| error.to_string())?;
-  Ok((Status::Done, Some(optimized.len() as u64), width, height, Some(message.into()), Some(output_path.to_string_lossy().to_string())))
+  Ok((Status::Done, Some(optimized.len() as u64), width, height, Some(message), Some(output_path.to_string_lossy().to_string())))
 }
 
 fn process_normal_file(path: &Path, settings: &NormalSettings) -> Result<(Status, Option<u64>, u32, u32, Option<String>, Option<String>), String> {
-  if !is_supported_image(path) { return Err("PNGまたはHEICファイルではありません".into()); }
+  if !is_supported_image(path) { return Err("対応している画像ファイルではありません".into()); }
   let original = fs::read(path).map_err(|error| error.to_string())?;
   if is_png(path) && original.windows(4).any(|chunk| chunk == b"acTL") { return Err("APNG は MVP では未対応です".into()); }
   let source = load_input_image_from_bytes(path, &original)?.to_rgba8();
@@ -613,6 +829,11 @@ fn encode_rgb24(image: &image::RgbaImage, width: u32, height: u32) -> Result<Vec
   encode_pixels(width, height, png::ColorType::Rgb, &pixels)
 }
 
+fn encode_rgb_channels(image: &image::RgbaImage, width: u32, height: u32) -> Result<Vec<u8>, String> {
+  let pixels: Vec<u8> = image.pixels().flat_map(|pixel| [pixel[0], pixel[1], pixel[2]]).collect();
+  encode_pixels(width, height, png::ColorType::Rgb, &pixels)
+}
+
 fn encode_grayscale(image: &image::RgbaImage, width: u32, height: u32) -> Result<Vec<u8>, String> {
   let pixels: Vec<u8> = image.pixels().map(|pixel| (pixel[0] as f32 * 0.2126 + pixel[1] as f32 * 0.7152 + pixel[2] as f32 * 0.0722).round() as u8).collect();
   encode_pixels(width, height, png::ColorType::Grayscale, &pixels)
@@ -664,14 +885,23 @@ fn remember_heic_preview(path: &Path, image: &image::DynamicImage) {
 }
 
 fn input_dimensions(path: &Path) -> Result<(u32, u32), String> {
-  if is_png(path) {
-    image::image_dimensions(path).map_err(|error| format!("PNGを読み込めません: {error}"))
-  } else if is_heic(path) {
+  if is_heic(path) {
     if let Some(cached) = cached_heic_preview(path) { return Ok((cached.width, cached.height)); }
     let bytes = fs::read(path).map_err(|error| format!("HEICを読み込めません: {error}"))?;
     heic_dimensions_from_bytes(&bytes)
+  } else if standard_image_format(path).is_some() {
+    let format = standard_image_format(path).unwrap();
+    let mut reader = image::ImageReader::open(path).map_err(|error| format!("{}を読み込めません: {error}", input_format_name(path)))?;
+    reader.set_format(format);
+    let mut decoder = reader.into_decoder().map_err(|error| format!("{}を読み込めません: {error}", input_format_name(path)))?;
+    let (width, height) = decoder.dimensions();
+    let orientation = decoder.orientation().unwrap_or(image::metadata::Orientation::NoTransforms);
+    Ok(match orientation {
+      image::metadata::Orientation::Rotate90 | image::metadata::Orientation::Rotate270 | image::metadata::Orientation::Rotate90FlipH | image::metadata::Orientation::Rotate270FlipH => (height, width),
+      _ => (width, height),
+    })
   } else {
-    Err("PNGまたはHEICファイルではありません".into())
+    Err("対応している画像ファイルではありません".into())
   }
 }
 
@@ -703,10 +933,15 @@ fn load_input_image(path: &Path) -> Result<image::DynamicImage, String> {
 }
 
 fn load_input_image_from_bytes(path: &Path, bytes: &[u8]) -> Result<image::DynamicImage, String> {
-  if is_png(path) {
-    return image::load_from_memory_with_format(bytes, image::ImageFormat::Png).map_err(|error| format!("PNGを読み込めません: {error}"));
+  if let Some(format) = standard_image_format(path) {
+    let reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
+    let mut decoder = reader.into_decoder().map_err(|error| format!("{}を読み込めません: {error}", input_format_name(path)))?;
+    let orientation = decoder.orientation().unwrap_or(image::metadata::Orientation::NoTransforms);
+    let mut decoded = image::DynamicImage::from_decoder(decoder).map_err(|error| format!("{}を読み込めません: {error}", input_format_name(path)))?;
+    decoded.apply_orientation(orientation);
+    return Ok(decoded);
   }
-  if !is_heic(path) { return Err("PNGまたはHEICファイルではありません".into()); }
+  if !is_heic(path) { return Err("対応している画像ファイルではありません".into()); }
   if bytes.len() > 200 * 1024 * 1024 { return Err("200 MBを超えるHEICは読み込めません".into()); }
 
   let decoded = heif_oxide::decode_bytes(bytes).map_err(|error| format!("HEICを読み込めません: {error}"))?;
@@ -804,7 +1039,34 @@ fn unique_output_path(dir: &Path, stem: &str, extension: &str) -> PathBuf {
 fn unique_named_output_path(dir: &Path, stem: &str, suffix: &str) -> PathBuf { let base = dir.join(format!("{stem}-{suffix}.png")); if !base.exists() { return base; } for index in 2.. { let candidate = dir.join(format!("{stem}-{suffix}-{index}.png")); if !candidate.exists() { return candidate; } } unreachable!() }
 fn is_png(path: &Path) -> bool { path.extension().and_then(|extension| extension.to_str()).is_some_and(|extension| extension.eq_ignore_ascii_case("png")) }
 fn is_heic(path: &Path) -> bool { path.extension().and_then(|extension| extension.to_str()).is_some_and(|extension| matches!(extension.to_ascii_lowercase().as_str(), "heic" | "heif")) }
-fn is_supported_image(path: &Path) -> bool { is_png(path) || is_heic(path) }
+fn standard_image_format(path: &Path) -> Option<image::ImageFormat> {
+  match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+    "png" => Some(image::ImageFormat::Png),
+    "jpg" | "jpeg" | "jfif" => Some(image::ImageFormat::Jpeg),
+    "webp" => Some(image::ImageFormat::WebP),
+    "bmp" => Some(image::ImageFormat::Bmp),
+    "tif" | "tiff" => Some(image::ImageFormat::Tiff),
+    "gif" => Some(image::ImageFormat::Gif),
+    "tga" => Some(image::ImageFormat::Tga),
+    "dds" => Some(image::ImageFormat::Dds),
+    _ => None,
+  }
+}
+fn input_format_name(path: &Path) -> &'static str {
+  if is_heic(path) { return "HEIC"; }
+  match standard_image_format(path) {
+    Some(image::ImageFormat::Png) => "PNG",
+    Some(image::ImageFormat::Jpeg) => "JPEG",
+    Some(image::ImageFormat::WebP) => "WebP",
+    Some(image::ImageFormat::Bmp) => "BMP",
+    Some(image::ImageFormat::Tiff) => "TIFF",
+    Some(image::ImageFormat::Gif) => "GIF",
+    Some(image::ImageFormat::Tga) => "TGA",
+    Some(image::ImageFormat::Dds) => "DDS",
+    _ => "画像",
+  }
+}
+fn is_supported_image(path: &Path) -> bool { is_heic(path) || standard_image_format(path).is_some() }
 
 fn main() {
   tauri::Builder::default()
@@ -831,6 +1093,49 @@ mod tests {
     assert_eq!(resize_dimensions(320, 200, &config), (320, 200));
     config.max_width = Some(160);
     assert_eq!(resize_dimensions(320, 200, &config), (160, 100));
+  }
+
+  #[test]
+  fn common_image_extensions_are_supported() {
+    for extension in ["png", "jpg", "jpeg", "jfif", "webp", "heic", "heif", "bmp", "tif", "tiff", "gif", "tga", "dds"] {
+      assert!(is_supported_image(Path::new(&format!("sample.{extension}"))), "{extension} should be supported");
+    }
+    assert!(!is_supported_image(Path::new("sample.svg")));
+  }
+
+  #[test]
+  fn common_static_formats_decode_and_create_previews() {
+    let id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let root = std::env::temp_dir().join(format!("be-asset-image-formats-{}-{id}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let source = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(12, 8, image::Rgba([40, 120, 220, 255])));
+    let output_dir = root.join("output");
+    let mut config = settings();
+    config.output_dir = Some(output_dir.to_string_lossy().to_string());
+    for (extension, format) in [
+      ("png", image::ImageFormat::Png),
+      ("jpg", image::ImageFormat::Jpeg),
+      ("webp", image::ImageFormat::WebP),
+      ("bmp", image::ImageFormat::Bmp),
+      ("tiff", image::ImageFormat::Tiff),
+      ("gif", image::ImageFormat::Gif),
+      ("tga", image::ImageFormat::Tga),
+    ] {
+      let path = root.join(format!("sample.{extension}"));
+      let mut encoded = std::io::Cursor::new(Vec::new());
+      source.write_to(&mut encoded, format).unwrap();
+      fs::write(&path, encoded.into_inner()).unwrap();
+      assert_eq!(input_dimensions(&path).unwrap(), (12, 8), "{extension} dimensions");
+      assert_eq!(load_input_image(&path).unwrap().dimensions(), (12, 8), "{extension} decode");
+      assert!(make_preview(&path, 32).unwrap().starts_with("data:image/png;base64,"), "{extension} preview");
+      let converted = process_file(&path, &config).unwrap();
+      assert_eq!((converted.2, converted.3), (12, 8), "{extension} conversion dimensions");
+      if extension != "png" {
+        assert!(matches!(converted.0, Status::Done), "{extension} conversion status");
+        assert!(Path::new(converted.5.as_deref().unwrap()).is_file(), "{extension} converted output");
+      }
+    }
+    fs::remove_dir_all(root).unwrap();
   }
 
   #[test]
@@ -1153,29 +1458,49 @@ mod tests {
     let output_dir = root.join("output");
     fs::create_dir_all(&root).unwrap();
     let input = root.join("sample.png");
-    let pixels = (0..(24 * 24)).flat_map(|index| [index as u8, (index / 2) as u8, 180, 255]).collect();
-    let image = image::RgbaImage::from_raw(24, 24, pixels).unwrap();
-    fs::write(&input, encode_rgba(&image, 24, 24).unwrap()).unwrap();
+    // 144 px crosses the 128 px core boundary on both axes, exercising the
+    // vertical, horizontal, and four-way overlap blends in one small image.
+    let pixels = (0..(144 * 144)).flat_map(|index| [index as u8, (index / 2) as u8, 180, 255]).collect();
+    let image = image::RgbaImage::from_raw(144, 144, pixels).unwrap();
+    fs::write(&input, encode_rgba(&image, 144, 144).unwrap()).unwrap();
     let working_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources").join("realesrgan");
     let runtime = RealEsrganRuntime { executable: working_dir.join("realesrgan-ncnn-vulkan.exe"), working_dir };
-    let settings = AiRestoreSettings { output_dir: Some(output_dir.to_string_lossy().to_string()), output_scale: 2, tile_size: Some(128) };
+    let settings = AiRestoreSettings { output_dir: Some(output_dir.to_string_lossy().to_string()), output_scale: 2, tile_size: Some(128), seamless_tiles: true };
     let result = process_ai_restore_file(&input, &settings, &runtime).unwrap();
     assert!(matches!(result.0, Status::Done));
-    assert_eq!((result.2, result.3), (48, 48));
-    assert_eq!(image::image_dimensions(result.5.unwrap()).unwrap(), (48, 48));
+    assert_eq!((result.2, result.3), (288, 288));
+    let restored_path = result.5.unwrap();
+    assert_eq!(image::image_dimensions(&restored_path).unwrap(), (288, 288));
+    let restored = image::open(restored_path).unwrap().to_rgb8();
+    assert!(restored.get_pixel(250, 250).0.iter().any(|channel| *channel > 20));
 
-    let settings = AiRestoreSettings { output_dir: Some(output_dir.to_string_lossy().to_string()), output_scale: 1, tile_size: Some(128) };
+    let settings = AiRestoreSettings { output_dir: Some(output_dir.to_string_lossy().to_string()), output_scale: 1, tile_size: Some(128), seamless_tiles: false };
     let result = process_ai_restore_file(&input, &settings, &runtime).unwrap();
     assert!(matches!(result.0, Status::Done));
-    assert_eq!((result.2, result.3), (24, 24));
-    assert_eq!(image::image_dimensions(result.5.unwrap()).unwrap(), (24, 24));
+    assert_eq!((result.2, result.3), (144, 144));
+    assert_eq!(image::image_dimensions(result.5.unwrap()).unwrap(), (144, 144));
 
     let heic = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata").join("flat_red_64.heic");
-    let settings = AiRestoreSettings { output_dir: Some(output_dir.to_string_lossy().to_string()), output_scale: 2, tile_size: Some(128) };
+    let settings = AiRestoreSettings { output_dir: Some(output_dir.to_string_lossy().to_string()), output_scale: 2, tile_size: Some(128), seamless_tiles: false };
     let result = process_ai_restore_file(&heic, &settings, &runtime).unwrap();
     assert!(matches!(result.0, Status::Done));
     assert_eq!((result.2, result.3), (128, 128));
     assert_eq!(image::image_dimensions(result.5.unwrap()).unwrap(), (128, 128));
     fs::remove_dir_all(root).unwrap();
   }
+
+  #[test]
+  #[ignore = "requires SMARTPNG_AI_SAMPLE, SMARTPNG_AI_OUTPUT_DIR, a Vulkan GPU, and the bundled runtime"]
+  fn real_ai_restore_sample_can_be_checked_with_seamless_tiles() {
+    let input = PathBuf::from(std::env::var("SMARTPNG_AI_SAMPLE").expect("SMARTPNG_AI_SAMPLE is required"));
+    let output_dir = PathBuf::from(std::env::var("SMARTPNG_AI_OUTPUT_DIR").expect("SMARTPNG_AI_OUTPUT_DIR is required"));
+    let working_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources").join("realesrgan");
+    let runtime = RealEsrganRuntime { executable: working_dir.join("realesrgan-ncnn-vulkan.exe"), working_dir };
+    let settings = AiRestoreSettings { output_dir: Some(output_dir.to_string_lossy().to_string()), output_scale: 1, tile_size: Some(512), seamless_tiles: true };
+    let result = process_ai_restore_file(&input, &settings, &runtime).unwrap();
+    assert!(matches!(result.0, Status::Done));
+    assert_eq!(image::image_dimensions(result.5.as_ref().unwrap()).unwrap(), input_dimensions(&input).unwrap());
+    println!("{}", result.5.unwrap());
+  }
+
 }
