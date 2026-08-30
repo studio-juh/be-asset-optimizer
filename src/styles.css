@@ -1,5 +1,14 @@
-:root { font-family: Inter, "Noto Sans JP", system-ui, sans-serif; color: #e7ecf7; background: #11141b; font-synthesis: none; }
+:root { font-family: Inter, "Noto Sans JP", system-ui, sans-serif; color: #e7ecf7; background: #11141b; font-synthesis: none; color-scheme: dark; --scrollbar-track: #151a24; --scrollbar-thumb: #3d485d; --scrollbar-thumb-hover: #56647c; --scrollbar-thumb-active: #69dca9; }
 * { box-sizing: border-box; } body { margin: 0; min-width: 960px; } button, input, select { font: inherit; } button { cursor: pointer; } button:disabled { cursor: not-allowed; opacity: .45; }
+
+/* WebView2 keeps native scrolling while the chrome follows the app theme. */
+* { scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track); }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+*::-webkit-scrollbar-thumb { min-height: 34px; border: 2px solid var(--scrollbar-track); border-radius: 999px; background: var(--scrollbar-thumb); }
+*::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+*::-webkit-scrollbar-thumb:active { background: var(--scrollbar-thumb-active); }
+*::-webkit-scrollbar-corner { background: var(--scrollbar-track); }
 main { max-width: 1440px; margin: 0 auto; padding: 34px; } header { display: flex; align-items: end; justify-content: space-between; margin-bottom: 26px; } h1,h2,p { margin: 0; } h1 { font-size: 32px; letter-spacing: -.04em; } h2 { font-size: 16px; } .eyebrow { color: #71e6b5; font-size: 11px; font-weight: 800; letter-spacing: .13em; margin-bottom: 8px; } .status-note { color: #97a2b8; font-size: 13px; }
 .workspace { display: grid; grid-template-columns: 288px 1fr; gap: 18px; } .settings, .queue { background: #1a1f2a; border: 1px solid #2b3344; border-radius: 14px; } .settings { padding: 20px; } .settings h2 { margin-bottom: 20px; } label { display: grid; gap: 7px; color: #b8c1d2; font-size: 12px; font-weight: 650; } input, select { width: 100%; border: 1px solid #39445a; border-radius: 7px; padding: 9px 10px; background: #121722; color: #eff3fb; outline: none; } input:focus,select:focus { border-color: #71e6b5; } .path-row { display: grid; grid-template-columns: 1fr 54px; gap: 6px; } fieldset { border: 0; border-top: 1px solid #30394a; margin: 18px 0 0; padding: 17px 0 0; } legend { color: #e7ecf7; font-size: 13px; font-weight: 750; padding: 0; margin-bottom: 12px; } .split { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-bottom: 12px; } .segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 12px; } .segmented button { background: #252c3a; color: #aab5c9; border: 1px solid #39445a; border-radius: 7px; padding: 8px 4px; font-size: 12px; } .segmented button.active { background: #243d3a; border-color: #48bb8c; color: #a6f7d5; } .checkbox { display: flex; align-items: center; gap: 8px; margin-top: 12px; } .checkbox input { width: 15px; accent-color: #69dca9; } .hint { color: #7f8aa0; font-size: 11px; line-height: 1.65; margin-top: 18px; }
 .queue { min-width: 0; overflow: hidden; } .queue-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 20px; border-bottom: 1px solid #2b3344; } .queue-toolbar h2 span { color: #71e6b5; margin-left: 4px; } .queue-toolbar p { color: #8c98af; font-size: 12px; margin-top: 5px; } .actions { display: flex; gap: 8px; } .actions button, .path-row button, .row-actions button, .queue-footer button { border: 1px solid #3b465d; border-radius: 7px; background: #252c3a; color: #dbe4f3; padding: 9px 12px; font-size: 12px; } .actions .primary { background: #58d59b; border-color: #58d59b; color: #102218; font-weight: 800; } .drop-zone { align-items: center; background: repeating-linear-gradient(45deg, #1c2230, #1c2230 8px, #202735 8px, #202735 16px); border: 1px dashed #52607a; color: #dce5f3; display: flex; flex-direction: column; gap: 7px; justify-content: center; height: 360px; width: calc(100% - 40px); margin: 20px; border-radius: 10px; } .drop-zone strong { font-size: 17px; } .drop-zone span { color: #96a2b8; font-size: 13px; }
@@ -89,7 +98,7 @@ legend { margin-bottom: 8px; }
 .atlas-grid { width: min(100%, calc(100vh - 158px)); padding: 10px; }
 
 /* Light theme is the default; the existing dark palette remains selectable. */
-:root[data-theme="light"] { color: #253044; background: #edf1f5; }
+:root[data-theme="light"] { color: #253044; background: #edf1f5; color-scheme: light; --scrollbar-track: #e7ebf0; --scrollbar-thumb: #aeb9c7; --scrollbar-thumb-hover: #8795a8; --scrollbar-thumb-active: #24986d; }
 [data-theme="light"] body { background: #edf1f5; }
 [data-theme="light"] .settings, [data-theme="light"] .queue { background: #ffffff; border-color: #d5dce6; }
 [data-theme="light"] label { color: #4b586d; }

@@ -57,7 +57,7 @@ struct NormalSettings { output_dir: Option<String>, max_long_edge: Option<u32>, 
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AiRestoreSettings { output_dir: Option<String>, output_scale: u32, tile_size: Option<u32>, seamless_tiles: bool }
+struct AiRestoreSettings { output_dir: Option<String>, output_scale: u32, tile_size: Option<u32>, seamless_tiles: bool, model: String, restoration_strength: u8 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -329,16 +329,18 @@ fn resolve_realesrgan_runtime(app: &AppHandle) -> Result<RealEsrganRuntime, Stri
 
   for working_dir in candidates {
     let executable = working_dir.join("realesrgan-ncnn-vulkan.exe");
-    let model = working_dir.join("models").join("realesrgan-x4plus.bin");
-    let parameters = working_dir.join("models").join("realesrgan-x4plus.param");
-    if executable.is_file() && model.is_file() && parameters.is_file() {
+    let detailed_model = working_dir.join("models").join("realesrgan-x4plus.bin");
+    let detailed_parameters = working_dir.join("models").join("realesrgan-x4plus.param");
+    let natural_model = working_dir.join("models").join("realesrnet-x4plus.bin");
+    let natural_parameters = working_dir.join("models").join("realesrnet-x4plus.param");
+    if executable.is_file() && detailed_model.is_file() && detailed_parameters.is_file() && natural_model.is_file() && natural_parameters.is_file() {
       return Ok(RealEsrganRuntime { executable, working_dir });
     }
   }
   Err("AI復元モデルが見つかりません。アプリを再インストールしてください".into())
 }
 
-fn run_realesrgan(runtime: &RealEsrganRuntime, input: &Path, output: &Path, tile_size: u32) -> Result<(), String> {
+fn run_realesrgan(runtime: &RealEsrganRuntime, input: &Path, output: &Path, tile_size: u32, model_name: &str) -> Result<(), String> {
   let mut command = Command::new(&runtime.executable);
   command
     .current_dir(&runtime.working_dir)
@@ -347,7 +349,7 @@ fn run_realesrgan(runtime: &RealEsrganRuntime, input: &Path, output: &Path, tile
     .arg("-s").arg("4")
     .arg("-t").arg(tile_size.to_string())
     .arg("-m").arg("models")
-    .arg("-n").arg("realesrgan-x4plus")
+    .arg("-n").arg(model_name)
     .arg("-f").arg("png");
   command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
   #[cfg(windows)]
@@ -518,7 +520,7 @@ fn stitch_ai_tiles(tiles: &[Vec<AiTileSpec>], source_width: u32, source_height: 
   fs::write(output_path, encoded).map_err(|error| format!("AI復元結果を合成できません: {error}"))
 }
 
-fn process_ai_restore_seamless(input_path: &Path, output_path: &Path, temporary_dir: &Path, source_width: u32, source_height: u32, core_size: u32, runtime: &RealEsrganRuntime) -> Result<(), String> {
+fn process_ai_restore_seamless(input_path: &Path, output_path: &Path, temporary_dir: &Path, source_width: u32, source_height: u32, core_size: u32, runtime: &RealEsrganRuntime, model_name: &str) -> Result<(), String> {
   let input_dir = temporary_dir.join("tiles-input");
   let output_dir = temporary_dir.join("tiles-output");
   fs::create_dir_all(&input_dir).map_err(|error| format!("AI復元タイル用フォルダーを作成できません: {error}"))?;
@@ -551,10 +553,21 @@ fn process_ai_restore_seamless(input_path: &Path, output_path: &Path, temporary_
     for tile in row {
       // Keep the engine's own tile size slightly larger than the padded input.
       // An exact square match can yield an empty/black tile in this NCNN build.
-      run_realesrgan(runtime, &tile.input_path, &tile.output_path, core_size + overlap * 2 + 32)?;
+      run_realesrgan(runtime, &tile.input_path, &tile.output_path, core_size + overlap * 2 + 32, model_name)?;
     }
   }
   stitch_ai_tiles(&tiles, source_width, source_height, overlap, output_path, scaled_alpha.as_ref())
+}
+
+fn blend_ai_restore_with_reference(restored: &mut image::RgbaImage, reference: &image::RgbaImage, strength: u8) {
+  let ai_weight = strength as u16;
+  let reference_weight = 100 - ai_weight;
+  for (output, original) in restored.pixels_mut().zip(reference.pixels()) {
+    for channel in 0..3 {
+      output[channel] = ((output[channel] as u16 * ai_weight + original[channel] as u16 * reference_weight + 50) / 100) as u8;
+    }
+    output[3] = original[3];
+  }
 }
 
 fn process_ai_restore_file(path: &Path, settings: &AiRestoreSettings, runtime: &RealEsrganRuntime) -> Result<(Status, Option<u64>, u32, u32, Option<String>, Option<String>), String> {
@@ -562,6 +575,12 @@ fn process_ai_restore_file(path: &Path, settings: &AiRestoreSettings, runtime: &
   if !path.is_file() { return Err("入力画像を開けません".into()); }
   if !matches!(settings.output_scale, 1 | 2 | 4) { return Err("出力倍率が正しくありません".into()); }
   if settings.tile_size.is_some_and(|value| value != 0 && value < 32) { return Err("タイルサイズは自動または32 px以上にしてください".into()); }
+  if !(1..=100).contains(&settings.restoration_strength) { return Err("復元強度は1〜100%で指定してください".into()); }
+  let model_name = match settings.model.as_str() {
+    "natural" => "realesrnet-x4plus",
+    "detailed" => "realesrgan-x4plus",
+    _ => return Err("AI復元モデルが正しくありません".into()),
+  };
 
   // GPUへ渡す前はヘッダーだけを読み、元画像全体のCPUデコードを避ける。
   let (source_width, source_height) = input_dimensions(path)?;
@@ -585,17 +604,17 @@ fn process_ai_restore_file(path: &Path, settings: &AiRestoreSettings, runtime: &
   // externally because the NCNN runner's internal tile padding is too narrow.
   let tile_size = settings.tile_size.unwrap_or(512);
   let engine_result = if settings.seamless_tiles && tile_size > 0 {
-    process_ai_restore_seamless(&temporary_input, &temporary_output, &temporary_dir, source_width, source_height, tile_size, runtime)
+    process_ai_restore_seamless(&temporary_input, &temporary_output, &temporary_dir, source_width, source_height, tile_size, runtime, model_name)
   } else {
-    run_realesrgan(runtime, &temporary_input, &temporary_output, tile_size)
+    run_realesrgan(runtime, &temporary_input, &temporary_output, tile_size, model_name)
   };
   if let Err(error) = engine_result {
     let _ = fs::remove_dir_all(&temporary_dir);
     return Err(error);
   }
 
-  // 4倍はNCNNが出力したPNGをそのまま保存する。1倍・2倍は、4倍専用
-  // モデルの正常な出力からLanczosで目的寸法へ縮小する。
+  // Both bundled models infer at native 4x. Resize once to the requested size,
+  // then mix the original back in to keep colors and material detail natural.
   let save_result = (|| {
     let output_dir = if let Some(dir) = settings.output_dir.as_deref().filter(|value| !value.trim().is_empty()) {
       PathBuf::from(dir)
@@ -606,21 +625,28 @@ fn process_ai_restore_file(path: &Path, settings: &AiRestoreSettings, runtime: &
     let suffix = match settings.output_scale { 1 => "ai-restored", 2 => "ai-x2", _ => "ai-x4" };
     let output_path = unique_named_output_path(&output_dir, path.file_stem().and_then(|value| value.to_str()).unwrap_or("image"), suffix);
 
-    if settings.output_scale == 4 {
+    let mode_label = if settings.model == "natural" { "自然復元" } else { "高精細復元" };
+    if settings.output_scale == 4 && settings.restoration_strength == 100 {
       let (width, height) = image::image_dimensions(&temporary_output).map_err(|error| format!("AI復元結果を確認できません: {error}"))?;
       let output_bytes = fs::copy(&temporary_output, &output_path).map_err(|error| format!("AI復元結果を保存できません: {error}"))?;
-      return Ok((Status::Done, Some(output_bytes), width, height, Some("AI復元して4倍に拡大しました".into()), Some(output_path.to_string_lossy().to_string())));
+      return Ok((Status::Done, Some(output_bytes), width, height, Some(format!("{mode_label}で4倍に拡大しました（強度100%）")), Some(output_path.to_string_lossy().to_string())));
     }
 
     let output_width = source_width.checked_mul(settings.output_scale).ok_or("出力幅が大きすぎます")?;
     let output_height = source_height.checked_mul(settings.output_scale).ok_or("出力高が大きすぎます")?;
     let processed = image::open(&temporary_output).map_err(|error| format!("AI復元結果を読み込めません: {error}"))?;
-    let has_alpha = processed.color().has_alpha();
-    let output = processed.resize_exact(output_width, output_height, FilterType::Lanczos3).to_rgba8();
+    let mut has_alpha = processed.color().has_alpha();
+    let mut output = if processed.dimensions() == (output_width, output_height) { processed.to_rgba8() } else { processed.resize_exact(output_width, output_height, FilterType::Lanczos3).to_rgba8() };
+    if settings.restoration_strength < 100 {
+      let reference = image::open(&temporary_input).map_err(|error| format!("元画像を合成用に読み込めません: {error}"))?;
+      has_alpha = reference.color().has_alpha();
+      let reference = if reference.dimensions() == (output_width, output_height) { reference.to_rgba8() } else { reference.resize_exact(output_width, output_height, FilterType::Lanczos3).to_rgba8() };
+      blend_ai_restore_with_reference(&mut output, &reference, settings.restoration_strength);
+    }
     let encoded = if has_alpha { encode_rgba(&output, output_width, output_height)? } else { encode_rgb24(&output, output_width, output_height)? };
     fs::write(&output_path, &encoded).map_err(|error| format!("AI復元結果を保存できません: {error}"))?;
-    let message = if settings.output_scale == 2 { "AI復元して2倍に拡大しました" } else { "AI復元後、元の寸法に戻しました" };
-    Ok((Status::Done, Some(encoded.len() as u64), output_width, output_height, Some(message.into()), Some(output_path.to_string_lossy().to_string())))
+    let size_message = match settings.output_scale { 1 => "元の寸法", 2 => "2倍", _ => "4倍" };
+    Ok((Status::Done, Some(encoded.len() as u64), output_width, output_height, Some(format!("{mode_label}・{size_message}で保存しました（強度{}%）", settings.restoration_strength)), Some(output_path.to_string_lossy().to_string())))
   })();
   let _ = fs::remove_dir_all(&temporary_dir);
   save_result
@@ -1240,6 +1266,14 @@ mod tests {
   }
 
   #[test]
+  fn ai_restore_strength_blends_color_and_keeps_original_alpha() {
+    let mut restored = image::RgbaImage::from_pixel(1, 1, image::Rgba([200, 100, 0, 100]));
+    let reference = image::RgbaImage::from_pixel(1, 1, image::Rgba([100, 0, 200, 220]));
+    blend_ai_restore_with_reference(&mut restored, &reference, 50);
+    assert_eq!(restored.get_pixel(0, 0).0, [150, 50, 100, 220]);
+  }
+
+  #[test]
   fn webp_encoder_writes_a_webp_container() {
     let image = image::RgbaImage::from_pixel(2, 2, image::Rgba([40, 120, 220, 128]));
     let bytes = encode_webp(&image, 2, 2, 82).unwrap();
@@ -1465,7 +1499,7 @@ mod tests {
     fs::write(&input, encode_rgba(&image, 144, 144).unwrap()).unwrap();
     let working_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources").join("realesrgan");
     let runtime = RealEsrganRuntime { executable: working_dir.join("realesrgan-ncnn-vulkan.exe"), working_dir };
-    let settings = AiRestoreSettings { output_dir: Some(output_dir.to_string_lossy().to_string()), output_scale: 2, tile_size: Some(128), seamless_tiles: true };
+    let settings = AiRestoreSettings { output_dir: Some(output_dir.to_string_lossy().to_string()), output_scale: 2, tile_size: Some(128), seamless_tiles: true, model: "natural".into(), restoration_strength: 50 };
     let result = process_ai_restore_file(&input, &settings, &runtime).unwrap();
     assert!(matches!(result.0, Status::Done));
     assert_eq!((result.2, result.3), (288, 288));
@@ -1474,14 +1508,14 @@ mod tests {
     let restored = image::open(restored_path).unwrap().to_rgb8();
     assert!(restored.get_pixel(250, 250).0.iter().any(|channel| *channel > 20));
 
-    let settings = AiRestoreSettings { output_dir: Some(output_dir.to_string_lossy().to_string()), output_scale: 1, tile_size: Some(128), seamless_tiles: false };
+    let settings = AiRestoreSettings { output_dir: Some(output_dir.to_string_lossy().to_string()), output_scale: 1, tile_size: Some(128), seamless_tiles: false, model: "detailed".into(), restoration_strength: 100 };
     let result = process_ai_restore_file(&input, &settings, &runtime).unwrap();
     assert!(matches!(result.0, Status::Done));
     assert_eq!((result.2, result.3), (144, 144));
     assert_eq!(image::image_dimensions(result.5.unwrap()).unwrap(), (144, 144));
 
     let heic = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata").join("flat_red_64.heic");
-    let settings = AiRestoreSettings { output_dir: Some(output_dir.to_string_lossy().to_string()), output_scale: 2, tile_size: Some(128), seamless_tiles: false };
+    let settings = AiRestoreSettings { output_dir: Some(output_dir.to_string_lossy().to_string()), output_scale: 2, tile_size: Some(128), seamless_tiles: false, model: "natural".into(), restoration_strength: 50 };
     let result = process_ai_restore_file(&heic, &settings, &runtime).unwrap();
     assert!(matches!(result.0, Status::Done));
     assert_eq!((result.2, result.3), (128, 128));
@@ -1496,7 +1530,7 @@ mod tests {
     let output_dir = PathBuf::from(std::env::var("SMARTPNG_AI_OUTPUT_DIR").expect("SMARTPNG_AI_OUTPUT_DIR is required"));
     let working_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources").join("realesrgan");
     let runtime = RealEsrganRuntime { executable: working_dir.join("realesrgan-ncnn-vulkan.exe"), working_dir };
-    let settings = AiRestoreSettings { output_dir: Some(output_dir.to_string_lossy().to_string()), output_scale: 1, tile_size: Some(512), seamless_tiles: true };
+    let settings = AiRestoreSettings { output_dir: Some(output_dir.to_string_lossy().to_string()), output_scale: 1, tile_size: Some(512), seamless_tiles: true, model: "natural".into(), restoration_strength: 50 };
     let result = process_ai_restore_file(&input, &settings, &runtime).unwrap();
     assert!(matches!(result.0, Status::Done));
     assert_eq!(image::image_dimensions(result.5.as_ref().unwrap()).unwrap(), input_dimensions(&input).unwrap());

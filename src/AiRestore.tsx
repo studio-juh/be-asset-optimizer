@@ -18,6 +18,8 @@ export default function AiRestore() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [outputDir, setOutputDir] = useState("");
   const [outputScale, setOutputScale] = useState<1 | 2 | 4>(1);
+  const [model, setModel] = useState<"natural" | "detailed">("natural");
+  const [restorationStrength, setRestorationStrength] = useState(50);
   const [tileSize, setTileSize] = useState(512);
   const [seamlessTiles, setSeamlessTiles] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -74,7 +76,7 @@ export default function AiRestore() {
     setIsProcessing(true); setNotice(`${ready.length} 枚をAI復元しています…`);
     setJobs((current) => current.map((job) => ready.some((item) => item.id === job.id) ? { ...job, status: "processing", message: "待機中" } : job));
     try {
-      await invoke("process_ai_restore_batch", { paths: ready.map((job) => job.path), settings: { outputDir: outputDir || null, outputScale, tileSize, seamlessTiles } });
+      await invoke("process_ai_restore_batch", { paths: ready.map((job) => job.path), settings: { outputDir: outputDir || null, outputScale, model, restorationStrength, tileSize, seamlessTiles } });
       setNotice("AI復元が完了しました");
     } catch (error) { setNotice(`AI復元を開始できませんでした: ${String(error)}`); }
     finally { setIsProcessing(false); }
@@ -84,7 +86,7 @@ export default function AiRestore() {
     <aside className="settings ai-restore-settings">
       <h2>AI復元設定</h2>
       <label>出力先<div className="path-row"><input value={outputDir} onChange={(event) => setOutputDir(event.target.value)} placeholder="入力元 / ai_restored" /><button onClick={chooseOutput}>選択</button></div></label>
-      <fieldset><legend>復元方法</legend><label>出力倍率<select value={outputScale} onChange={(event) => setOutputScale(Number(event.target.value) as 1 | 2 | 4)}><option value={1}>元の寸法（既定）</option><option value={2}>2倍</option><option value={4}>4倍</option></select></label><label>分割品質<select value={tileSize} onChange={(event) => setTileSize(Number(event.target.value))}><option value={512}>高品質（既定）</option><option value={256}>標準</option><option value={128}>低メモリ</option><option value={0}>自動（互換性）</option></select></label><label className="checkbox"><input type="checkbox" checked={seamlessTiles} onChange={(event) => setSeamlessTiles(event.target.checked)} disabled={tileSize === 0} />タイル境界をブレンド（推奨）</label><p className="mode-note">隣接範囲を重ねて合成し、四角いぼかしや継ぎ目を抑えます。GPUメモリ不足になる場合は分割品質を下げてください。</p></fieldset>
+      <fieldset><legend>復元方法</legend><label>復元モデル<select value={model} onChange={(event) => setModel(event.target.value as "natural" | "detailed")}><option value="natural">自然・忠実（既定）</option><option value="detailed">高精細</option></select></label><label>復元強度 <span className="range-row"><input type="range" min="25" max="100" step="5" value={restorationStrength} onChange={(event) => setRestorationStrength(Number(event.target.value))} /><output>{restorationStrength}%</output></span></label><label>出力倍率<select value={outputScale} onChange={(event) => setOutputScale(Number(event.target.value) as 1 | 2 | 4)}><option value={1}>元の寸法（既定）</option><option value={2}>2倍</option><option value={4}>4倍</option></select></label><label>分割品質<select value={tileSize} onChange={(event) => setTileSize(Number(event.target.value))}><option value={512}>高品質（既定）</option><option value={256}>標準</option><option value={128}>低メモリ</option><option value={0}>自動（互換性）</option></select></label><label className="checkbox"><input type="checkbox" checked={seamlessTiles} onChange={(event) => setSeamlessTiles(event.target.checked)} disabled={tileSize === 0} />タイル境界をブレンド（推奨）</label><p className="mode-note">「自然・忠実」は偽の細部を抑え、元画像を50%混ぜます。「高精細」は細部を強く作ります。境界ブレンドは四角いぼかしや継ぎ目を抑えます。</p></fieldset>
       <p className="hint">アルベドや写真素材向けです。ノーマル、粗さ、金属、マスクには直接使わず、必要なら復元したアルベドから作り直してください。元ファイルは変更しません。</p>
     </aside>
     <section className="queue">
