@@ -11,9 +11,9 @@ optimized/
 portable/
 *.msi
 *.exe
-!src-tauri/resources/realesrgan/realesrgan-ncnn-vulkan.exe
 
 # Downloaded and SHA-256 verified by scripts/prepare-ai-models.ps1
+src-tauri/resources/realesrgan/vcomp140.dll
 src-tauri/resources/realesrgan/models/realesrgan-x4plus.bin
 src-tauri/resources/realesrgan/models/realesrgan-x4plus.param
 src-tauri/resources/realesrgan/models/realesrnet-x4plus.bin
