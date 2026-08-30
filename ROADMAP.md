@@ -1,4 +1,4 @@
-# SmartPNG MVP 工程表
+# Be Asset Optimizer MVP 工程表
 
 最終更新: 2026-08-18  
 対象: Windows を最初の配布先とする、ローカル完結型の一括 PNG 軽量化デスクトップアプリ

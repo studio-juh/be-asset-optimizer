@@ -1,19 +1,24 @@
-# SmartPNG
+# Be Asset Optimizer
 
-ローカルで PNG をまとめて軽量化する Windows 向けデスクトップアプリです。画像は外部へ送信されません。
+Blenderで使うテクスチャと3Dアセットをまとめて整える、Windows向けデスクトップアプリです。画像は外部へ送信されません。
 
 ## 現在の機能
 
-- 複数 PNG のドラッグ＆ドロップとファイル選択
+- 複数 PNG / HEIC / HEIF、または画像フォルダーのドラッグ＆ドロップとファイル選択
+- PNG（既定）/ WebP / JPEG 出力と、WebP・JPEGの品質指定
+- PNG のローカルAI復元と 2倍 / 4倍アップスケール
 - リスト形式の一括処理、個別の状態・寸法・サイズ表示
 - 縦横比を維持したリサイズ（高品質 / ピクセルアート）
 - 256〜16 色のインデックスカラー化とディザリング
-- oxipng による最終最適化
+- oxipng による高速 / 標準 / 最大の最終最適化
 - 安全な別フォルダ出力と、元より大きい結果の自動スキップ
 - Blender 向けノーマルマップの一括生成（高さマップ PNG の明度を利用）
 - OpenGL (+Y) / DirectX (-Y) 切替と強さの調整
 
-APNG、16-bit PNG、ICC プロファイル付き PNG は現在の MVP の対象外です。
+HEICは一覧追加時にヘッダーだけを高速解析し、変換時に純Rustデコーダーで向き補正と表示向けsRGB変換を適用します。
+AI復元は同梱した Real-ESRGAN Vulkan 版で処理します。処理時の通信、Python、CUDA は不要です。
+
+APNG、16-bit PNG、HEIC画像シーケンス、HDR HEICのトーンマッピングは現在の MVP の対象外です。
 
 ## 開発起動
 
@@ -27,7 +32,7 @@ npm run tauri -- dev
 ```powershell
 npm run build
 Set-Location src-tauri; cargo test
-Set-Location ..; npm run tauri -- build --debug
+Set-Location ..; npm run tauri -- build
 ```
 
 デバッグ用の Windows インストーラーは `src-tauri/target/debug/bundle/` 以下に生成されます。
