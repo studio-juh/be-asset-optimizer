@@ -17,7 +17,10 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use image::{imageops::FilterType, GenericImageView, ImageDecoder, ImageEncoder};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{
+  menu::{AboutMetadataBuilder, MenuBuilder, MenuItemBuilder, SubmenuBuilder},
+  AppHandle, Emitter, Manager,
+};
 use ai_components::{resolve_realesrgan_runtime, RealEsrganRuntime};
 
 #[derive(Debug, Serialize, Clone)]
@@ -1072,6 +1075,45 @@ fn main() {
   tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_opener::init())
+    .menu(|app| {
+      let open = MenuItemBuilder::with_id("file-open", "ファイルを開く…").accelerator("Ctrl+O").build(app)?;
+      let file = SubmenuBuilder::new(app, "ファイル(&F)")
+        .item(&open)
+        .separator()
+        .quit_with_text("終了")
+        .build()?;
+      let tools = SubmenuBuilder::new(app, "機能(&T)")
+        .text("tab-optimize", "画像最適化")
+        .text("tab-restore", "AI復元")
+        .text("tab-normal", "ノーマルマップ")
+        .text("tab-atlas", "テクスチャアトラス")
+        .text("tab-preview", "3Dプレビュー")
+        .build()?;
+      let view = SubmenuBuilder::new(app, "表示(&V)")
+        .text("theme-light", "ライトテーマ")
+        .text("theme-dark", "ダークテーマ")
+        .separator()
+        .text("scale-80", "表示倍率 80%")
+        .text("scale-90", "表示倍率 90%")
+        .text("scale-100", "表示倍率 100%")
+        .text("scale-110", "表示倍率 110%")
+        .text("scale-125", "表示倍率 125%")
+        .build()?;
+      let about = AboutMetadataBuilder::new()
+        .name(Some("Be Asset Optimizer"))
+        .version(Some(env!("CARGO_PKG_VERSION")))
+        .comments(Some("Blender向けの画像・3Dアセット最適化ツール"))
+        .license(Some("GPL-3.0-or-later"))
+        .website(Some("https://github.com/studio-juh/be-asset-optimizer"))
+        .build();
+      let help = SubmenuBuilder::new(app, "ヘルプ(&H)")
+        .about_with_text("バージョン情報", Some(about))
+        .build()?;
+      MenuBuilder::new(app).items(&[&file, &tools, &view, &help]).build()
+    })
+    .on_menu_event(|app, event| {
+      let _ = app.emit("app-menu-action", event.id().as_ref());
+    })
     .invoke_handler(tauri::generate_handler![inspect_files, create_preview, load_model_package, process_batch, process_normal_batch, process_ai_restore_batch, create_texture_atlas, ai_components::get_ai_component_status, ai_components::install_ai_components, ai_components::cancel_ai_component_install, ai_components::remove_ai_components])
     .run(tauri::generate_context!())
     .expect("Be Asset Optimizer の起動に失敗しました");

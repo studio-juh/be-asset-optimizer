@@ -112,8 +112,10 @@ export default function TextureAtlas() {
       setDropTarget(target);
       if (detail.type === "drop") { setDropTarget(undefined); void addPaths(detail.paths, target); }
     };
+    const onMenuOpen = () => { void chooseFiles(); };
     window.addEventListener("smartpng-atlas-drag", onNativeDrag);
-    return () => { void offInspect.then((off) => off()); window.removeEventListener("smartpng-atlas-drag", onNativeDrag); };
+    window.addEventListener("smartpng-menu-open", onMenuOpen);
+    return () => { void offInspect.then((off) => off()); window.removeEventListener("smartpng-atlas-drag", onNativeDrag); window.removeEventListener("smartpng-menu-open", onMenuOpen); };
   }, []);
 
   const chooseFiles = async () => {

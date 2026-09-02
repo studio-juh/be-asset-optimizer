@@ -88,6 +88,7 @@ const dimensions = (width?: number, height?: number) =>
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<"optimize" | "restore" | "normal" | "atlas" | "preview">("optimize");
+  const activeTabRef = useRef(activeTab);
   const [displayScale, setDisplayScale] = useState(() => {
     const saved = Number(localStorage.getItem("smartpng-display-scale-v2"));
     return [0.8, 0.9, 1, 1.1, 1.25].includes(saved) ? saved : 1;
@@ -146,6 +147,8 @@ export default function App() {
     localStorage.setItem("smartpng-theme-v1", theme);
   }, [theme]);
 
+  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+
   const addPaths = async (paths: string[]) => {
     if (!paths.length) return;
     if (loadingRequestId.current) { setNotice("現在の画像を読み込み中です"); return; }
@@ -180,6 +183,30 @@ export default function App() {
     const selected = await open({ directory: true, multiple: false, title: "出力先フォルダを選択" });
     if (typeof selected === "string") setSettings((value) => ({ ...value, outputDir: selected }));
   };
+
+  useEffect(() => {
+    const unlistenMenu = listen<string>("app-menu-action", (event) => {
+      switch (event.payload) {
+        case "file-open":
+          if (activeTabRef.current === "optimize") void chooseFiles();
+          else window.dispatchEvent(new Event("smartpng-menu-open"));
+          break;
+        case "tab-optimize": setActiveTab("optimize"); break;
+        case "tab-restore": setActiveTab("restore"); break;
+        case "tab-normal": setActiveTab("normal"); break;
+        case "tab-atlas": setActiveTab("atlas"); break;
+        case "tab-preview": setActiveTab("preview"); break;
+        case "theme-light": setTheme("light"); break;
+        case "theme-dark": setTheme("dark"); break;
+        case "scale-80": setDisplayScale(0.8); break;
+        case "scale-90": setDisplayScale(0.9); break;
+        case "scale-100": setDisplayScale(1); break;
+        case "scale-110": setDisplayScale(1.1); break;
+        case "scale-125": setDisplayScale(1.25); break;
+      }
+    });
+    return () => { void unlistenMenu.then((off) => off()); };
+  }, []);
 
   const run = async () => {
     const ready = jobs.filter((job) => job.status === "ready" || job.status === "failed" || job.status === "skipped");

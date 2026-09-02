@@ -82,8 +82,10 @@ export default function AiRestore() {
       .then((status) => { componentInstalledRef.current = status.installed; setComponentStatus(status); })
       .catch((error) => setNotice(`AI機能を確認できませんでした: ${String(error)}`));
     const onDrop = (event: Event) => { void addPaths((event as CustomEvent<string[]>).detail); };
+    const onMenuOpen = () => componentInstalledRef.current ? void chooseFiles() : setNotice("先にAI機能を追加してください");
     window.addEventListener("smartpng-ai-restore-drop", onDrop);
-    return () => { void offProgress.then((off) => off()); void offInspect.then((off) => off()); void offComponentProgress.then((off) => off()); window.removeEventListener("smartpng-ai-restore-drop", onDrop); };
+    window.addEventListener("smartpng-menu-open", onMenuOpen);
+    return () => { void offProgress.then((off) => off()); void offInspect.then((off) => off()); void offComponentProgress.then((off) => off()); window.removeEventListener("smartpng-ai-restore-drop", onDrop); window.removeEventListener("smartpng-menu-open", onMenuOpen); };
   }, []);
 
   const chooseFiles = async () => { const selected = await open({ multiple: true, filters: [supportedImageFilter] }); if (selected) await addPaths(Array.isArray(selected) ? selected : [selected]); };

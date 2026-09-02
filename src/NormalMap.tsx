@@ -67,8 +67,10 @@ export default function NormalMap() {
       setNotice(`${update.completed} / ${update.total} 枚を読み込んでいます…`);
     });
     const onDrop = (event: Event) => { void addPaths((event as CustomEvent<string[]>).detail); };
+    const onMenuOpen = () => { void chooseFiles(); };
     window.addEventListener("smartpng-normal-drop", onDrop);
-    return () => { void offProgress.then((off) => off()); void offInspect.then((off) => off()); window.removeEventListener("smartpng-normal-drop", onDrop); };
+    window.addEventListener("smartpng-menu-open", onMenuOpen);
+    return () => { void offProgress.then((off) => off()); void offInspect.then((off) => off()); window.removeEventListener("smartpng-normal-drop", onDrop); window.removeEventListener("smartpng-menu-open", onMenuOpen); };
   }, []);
 
   const chooseFiles = async () => { const selected = await open({ multiple: true, filters: [supportedImageFilter] }); if (selected) await addPaths(Array.isArray(selected) ? selected : [selected]); };

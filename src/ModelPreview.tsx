@@ -63,8 +63,10 @@ export default function ModelPreview() {
       const modelPath = paths.find(isModelPath);
       if (modelPath) void loadModel(modelPath); else setNotice("FBXまたはGLBファイルをドロップしてください");
     };
+    const onMenuOpen = () => { void chooseModel(); };
     window.addEventListener("smartpng-model-drop", onDrop);
-    return () => window.removeEventListener("smartpng-model-drop", onDrop);
+    window.addEventListener("smartpng-menu-open", onMenuOpen);
+    return () => { window.removeEventListener("smartpng-model-drop", onDrop); window.removeEventListener("smartpng-menu-open", onMenuOpen); };
   }, []);
 
   useEffect(() => { autoRotateRef.current = autoRotate; }, [autoRotate]);
