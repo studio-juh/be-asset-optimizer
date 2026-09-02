@@ -75,6 +75,8 @@ main { display: flex; flex-direction: column; gap: 12px; }
 .ai-component-card progress { width: 100%; height: 7px; accent-color: #23865f; }
 .ai-component-card button { border: 1px solid #4b566b; border-radius: 6px; padding: 6px 8px; background: #252c3a; color: #dbe4f3; font-size: 10px; }
 .ai-component-card .component-install { border-color: #23865f; background: #23865f; color: #ffffff; font-weight: 750; }
+.ai-feature-disabled { opacity: .42; filter: grayscale(.65); pointer-events: none; user-select: none; }
+.ai-feature-disabled button:disabled { opacity: 1; }
 
 /* 100%表示でも情報量を保ったまま収まる、デスクトップ向けの高密度レイアウト。 */
 main { padding: 14px 16px; gap: 8px; }

@@ -30,10 +30,13 @@ export default function AiRestore() {
   const [isInstalling, setIsInstalling] = useState(false);
   const [componentProgress, setComponentProgress] = useState<AiComponentProgress | null>(null);
   const loadingRequestId = useRef("");
+  const componentInstalledRef = useRef(false);
   const [notice, setNotice] = useState(`復元する${supportedImageShortLabel}をここへドロップしてください`);
+  const aiAvailable = componentStatus?.installed === true;
 
   const addPaths = async (paths: string[]) => {
     if (!paths.length) return;
+    if (!componentInstalledRef.current) { setNotice("先にAI機能を追加してください"); return; }
     if (loadingRequestId.current) { setNotice("現在の画像を読み込み中です"); return; }
     const requestId = crypto.randomUUID();
     loadingRequestId.current = requestId;
@@ -69,10 +72,13 @@ export default function AiRestore() {
       setNotice(`${update.completed} / ${update.total} 枚を読み込んでいます…`);
     });
     const offComponentProgress = listen<AiComponentProgress>("ai-component-progress", (event) => {
-      setComponentProgress(event.payload);
+      const update = event.payload;
+      setComponentProgress((current) => current?.phase === "downloading" && update.phase === "downloading" && current.downloadedBytes > update.downloadedBytes
+        ? { ...update, downloadedBytes: current.downloadedBytes }
+        : update);
     });
     void invoke<AiComponentStatus>("get_ai_component_status")
-      .then(setComponentStatus)
+      .then((status) => { componentInstalledRef.current = status.installed; setComponentStatus(status); })
       .catch((error) => setNotice(`AI機能を確認できませんでした: ${String(error)}`));
     const onDrop = (event: Event) => { void addPaths((event as CustomEvent<string[]>).detail); };
     window.addEventListener("smartpng-ai-restore-drop", onDrop);
@@ -87,6 +93,7 @@ export default function AiRestore() {
     setComponentProgress({ phase: "starting", archiveIndex: 0, archiveCount: 1, downloadedBytes: 0, message: "ダウンロードを準備しています…" });
     try {
       const status = await invoke<AiComponentStatus>("install_ai_components");
+      componentInstalledRef.current = status.installed;
       setComponentStatus(status);
       setNotice("AI機能を追加しました");
     } catch (error) {
@@ -100,6 +107,7 @@ export default function AiRestore() {
     if (!window.confirm("ダウンロード済みのAIコンポーネントを削除しますか？")) return;
     try {
       const status = await invoke<AiComponentStatus>("remove_ai_components");
+      componentInstalledRef.current = status.installed;
       setComponentStatus(status);
       setComponentProgress(null);
       setNotice("AIコンポーネントを削除しました");
@@ -125,13 +133,15 @@ export default function AiRestore() {
         <div><strong>{componentStatus === null ? "AI機能を確認中…" : componentStatus.installed ? "AI機能を使用できます" : "AI機能は未追加です"}</strong><span>{componentStatus?.installed ? (componentStatus.source === "downloaded" ? `追加済みコンポーネント（${formatBytes(componentStatus.totalBytes)}）` : "同梱コンポーネント") : componentStatus ? `${formatBytes(componentStatus.downloadBytes)}を取得します（保存後${formatBytes(componentStatus.totalBytes)}）` : "必要なデータを確認しています"}</span></div>
         {isInstalling ? <><progress value={componentProgress?.downloadedBytes ?? 0} max={componentProgress?.totalBytes ?? 1} /><small>{componentProgress?.message ?? "準備しています…"}{componentProgress?.archiveIndex ? `（${componentProgress.archiveIndex}/${componentProgress.archiveCount}）` : ""}</small><button onClick={cancelComponentInstall}>キャンセル</button></> : componentStatus?.installed ? (componentStatus.source === "downloaded" && <button onClick={removeComponents}>削除</button>) : <button className="component-install" onClick={installComponents} disabled={componentStatus === null}>AI機能を追加</button>}
       </div>
-      <label>出力先<div className="path-row"><input value={outputDir} onChange={(event) => setOutputDir(event.target.value)} placeholder="入力元 / ai_restored" /><button onClick={chooseOutput}>選択</button></div></label>
-      <fieldset><legend>復元方法</legend><label>復元モデル<select value={model} onChange={(event) => setModel(event.target.value as "natural" | "detailed")}><option value="natural">自然・忠実（既定）</option><option value="detailed">高精細</option></select></label><label>復元強度 <span className="range-row"><input type="range" min="25" max="100" step="5" value={restorationStrength} onChange={(event) => setRestorationStrength(Number(event.target.value))} /><output>{restorationStrength}%</output></span></label><label>出力倍率<select value={outputScale} onChange={(event) => setOutputScale(Number(event.target.value) as 1 | 2 | 4)}><option value={1}>元の寸法（既定）</option><option value={2}>2倍</option><option value={4}>4倍</option></select></label><label>分割品質<select value={tileSize} onChange={(event) => setTileSize(Number(event.target.value))}><option value={512}>高品質（既定）</option><option value={256}>標準</option><option value={128}>低メモリ</option><option value={0}>自動（互換性）</option></select></label><label className="checkbox"><input type="checkbox" checked={seamlessTiles} onChange={(event) => setSeamlessTiles(event.target.checked)} disabled={tileSize === 0} />タイル境界をブレンド（推奨）</label><p className="mode-note">「自然・忠実」は偽の細部を抑え、元画像を50%混ぜます。「高精細」は細部を強く作ります。境界ブレンドは四角いぼかしや継ぎ目を抑えます。</p></fieldset>
-      <p className="hint">アルベドや写真素材向けです。ノーマル、粗さ、金属、マスクには直接使わず、必要なら復元したアルベドから作り直してください。元ファイルは変更しません。</p>
+      <div className={!aiAvailable ? "ai-feature-disabled" : ""} aria-disabled={!aiAvailable}>
+        <label>出力先<div className="path-row"><input value={outputDir} onChange={(event) => setOutputDir(event.target.value)} placeholder="入力元 / ai_restored" disabled={!aiAvailable} /><button onClick={chooseOutput} disabled={!aiAvailable}>選択</button></div></label>
+        <fieldset disabled={!aiAvailable}><legend>復元方法</legend><label>復元モデル<select value={model} onChange={(event) => setModel(event.target.value as "natural" | "detailed")}><option value="natural">自然・忠実（既定）</option><option value="detailed">高精細</option></select></label><label>復元強度 <span className="range-row"><input type="range" min="25" max="100" step="5" value={restorationStrength} onChange={(event) => setRestorationStrength(Number(event.target.value))} /><output>{restorationStrength}%</output></span></label><label>出力倍率<select value={outputScale} onChange={(event) => setOutputScale(Number(event.target.value) as 1 | 2 | 4)}><option value={1}>元の寸法（既定）</option><option value={2}>2倍</option><option value={4}>4倍</option></select></label><label>分割品質<select value={tileSize} onChange={(event) => setTileSize(Number(event.target.value))}><option value={512}>高品質（既定）</option><option value={256}>標準</option><option value={128}>低メモリ</option><option value={0}>自動（互換性）</option></select></label><label className="checkbox"><input type="checkbox" checked={seamlessTiles} onChange={(event) => setSeamlessTiles(event.target.checked)} disabled={!aiAvailable || tileSize === 0} />タイル境界をブレンド（推奨）</label><p className="mode-note">「自然・忠実」は偽の細部を抑え、元画像を50%混ぜます。「高精細」は細部を強く作ります。境界ブレンドは四角いぼかしや継ぎ目を抑えます。</p></fieldset>
+        <p className="hint">アルベドや写真素材向けです。ノーマル、粗さ、金属、マスクには直接使わず、必要なら復元したアルベドから作り直してください。元ファイルは変更しません。</p>
+      </div>
     </aside>
-    <section className="queue">
-      <div className="queue-toolbar"><div><h2>AI復元リスト <span>{jobs.length}</span></h2><p>{notice}</p></div><div className="actions"><button className="secondary" onClick={chooseFiles} disabled={isProcessing || isLoading}>ファイルを追加</button><button className="secondary" onClick={() => setJobs((items) => items.map(({ outputBytes, outputWidth, outputHeight, message, outputPath, ...job }) => ({ ...job, status: "ready" })))} disabled={!jobs.length || isProcessing || isLoading}>変換ステータスをクリア</button><button className="primary" onClick={run} disabled={!jobs.length || isProcessing || isLoading || !componentStatus?.installed}>{isLoading ? "読込中…" : isProcessing ? "復元中…" : componentStatus?.installed ? "AI復元を開始" : "AI機能を追加してください"}</button></div></div>
-      {jobs.length === 0 ? <button className="drop-zone" onClick={chooseFiles} disabled={isLoading}><strong>{supportedImageShortLabel}またはフォルダーをドロップ</strong><span>複数枚をまとめてAI復元・拡大</span></button> : <><div className="table-header normal-table"><span>ファイル</span><span>元の寸法</span><span>出力寸法</span><span>状態</span><span></span></div><div className="rows">{jobs.map((job) => <div className="job-row normal-table" key={job.id}><div className="file"><Thumbnail path={job.path} alt={`${job.name} のプレビュー`} fallbackLabel="AI" /><div><strong title={job.path}>{job.name}</strong><small>{job.message || job.path}</small></div></div><span>{job.width} × {job.height}</span><span>{job.outputWidth && job.outputHeight ? `${job.outputWidth} × ${job.outputHeight}` : formatBytes(job.outputBytes)}</span><span className={`badge ${job.status}`}>{label(job.status)}</span><div className="row-actions">{job.outputPath && <button title="エクスプローラーで出力ファイルを表示" onClick={() => revealItemInDir(job.outputPath!)}>開く</button>}<button title="リストから削除" onClick={() => setJobs((items) => items.filter((item) => item.id !== job.id))} disabled={job.status === "processing"}>×</button></div></div>)}</div><div className="queue-footer"><div className="footer-actions"><button onClick={() => setJobs([])} disabled={isProcessing || isLoading}>リストをクリア</button></div><span>{jobs.filter((job) => job.status === "done").length} 件完了 / {jobs.filter((job) => job.status === "failed").length} 件失敗</span></div></>}
+    <section className={`queue ${!aiAvailable ? "ai-feature-disabled" : ""}`} aria-disabled={!aiAvailable}>
+      <div className="queue-toolbar"><div><h2>AI復元リスト <span>{jobs.length}</span></h2><p>{notice}</p></div><div className="actions"><button className="secondary" onClick={chooseFiles} disabled={!aiAvailable || isProcessing || isLoading}>ファイルを追加</button><button className="secondary" onClick={() => setJobs((items) => items.map(({ outputBytes, outputWidth, outputHeight, message, outputPath, ...job }) => ({ ...job, status: "ready" })))} disabled={!aiAvailable || !jobs.length || isProcessing || isLoading}>変換ステータスをクリア</button><button className="primary" onClick={run} disabled={!aiAvailable || !jobs.length || isProcessing || isLoading}>{isLoading ? "読込中…" : isProcessing ? "復元中…" : aiAvailable ? "AI復元を開始" : "AI機能を追加してください"}</button></div></div>
+      {jobs.length === 0 ? <button className="drop-zone" onClick={chooseFiles} disabled={!aiAvailable || isLoading}><strong>{supportedImageShortLabel}またはフォルダーをドロップ</strong><span>複数枚をまとめてAI復元・拡大</span></button> : <><div className="table-header normal-table"><span>ファイル</span><span>元の寸法</span><span>出力寸法</span><span>状態</span><span></span></div><div className="rows">{jobs.map((job) => <div className="job-row normal-table" key={job.id}><div className="file"><Thumbnail path={job.path} alt={`${job.name} のプレビュー`} fallbackLabel="AI" /><div><strong title={job.path}>{job.name}</strong><small>{job.message || job.path}</small></div></div><span>{job.width} × {job.height}</span><span>{job.outputWidth && job.outputHeight ? `${job.outputWidth} × ${job.outputHeight}` : formatBytes(job.outputBytes)}</span><span className={`badge ${job.status}`}>{label(job.status)}</span><div className="row-actions">{job.outputPath && <button title="エクスプローラーで出力ファイルを表示" onClick={() => revealItemInDir(job.outputPath!)} disabled={!aiAvailable}>開く</button>}<button title="リストから削除" onClick={() => setJobs((items) => items.filter((item) => item.id !== job.id))} disabled={!aiAvailable || job.status === "processing"}>×</button></div></div>)}</div><div className="queue-footer"><div className="footer-actions"><button onClick={() => setJobs([])} disabled={!aiAvailable || isProcessing || isLoading}>リストをクリア</button></div><span>{jobs.filter((job) => job.status === "done").length} 件完了 / {jobs.filter((job) => job.status === "failed").length} 件失敗</span></div></>}
     </section>
   </section>;
 }

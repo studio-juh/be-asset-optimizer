@@ -2,11 +2,19 @@ use std::{
   fs::{self, File},
   io::{Read, Write},
   path::{Path, PathBuf},
-  sync::atomic::{AtomicBool, Ordering},
+  sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc,
+  },
+  thread,
   time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use reqwest::blocking::Client;
+use reqwest::{
+  header::{CONTENT_RANGE, RANGE},
+  StatusCode,
+};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager};
@@ -15,6 +23,9 @@ use zip::ZipArchive;
 const COMPONENT_BYTES: u64 = 73_425_210;
 const DOWNLOAD_BYTES: u64 = 64_116_338;
 const USER_AGENT: &str = "Be-Asset-Optimizer/0.5";
+const PARALLEL_DOWNLOADS: usize = 4;
+const PARALLEL_DOWNLOAD_MIN_BYTES: u64 = 8 * 1024 * 1024;
+const DOWNLOAD_PROGRESS_STEP: u64 = 512 * 1024;
 
 struct ComponentFile {
   archive_name: &'static str,
@@ -413,6 +424,258 @@ fn download_archive(
       format!("{}をダウンロードしています…", archive.label),
     );
   }
+
+  match download_archive_parallel(app, client, archive, archive_index, archive_count, destination) {
+    Ok(true) => {}
+    Ok(false) => {
+      download_archive_sequential(app, client, archive, archive_index, archive_count, destination)?;
+    }
+    Err(error) => {
+      check_cancelled()?;
+      cleanup_download_parts(destination);
+      let _ = fs::remove_file(destination);
+      if let Some(app) = app {
+        emit_progress(
+          app,
+          "retrying",
+          archive_index,
+          archive_count,
+          0,
+          None,
+          format!("{}の接続を切り替えています…", archive.label),
+        );
+      }
+      download_archive_sequential(app, client, archive, archive_index, archive_count, destination)
+        .map_err(|fallback_error| format!("並列ダウンロード: {error} / 通常ダウンロード: {fallback_error}"))?;
+    }
+  }
+
+  cleanup_download_parts(destination);
+  if let Some(expected) = archive.archive_sha256 {
+    if !sha256_matches(destination, expected)? {
+      return Err(format!("{}の安全性を確認できませんでした", archive.label));
+    }
+  }
+  Ok(())
+}
+
+fn download_archive_parallel(
+  app: Option<&AppHandle>,
+  client: &Client,
+  archive: &ComponentArchive,
+  archive_index: usize,
+  archive_count: usize,
+  destination: &Path,
+) -> Result<bool, String> {
+  let Some(total_bytes) = probe_range_size(client, archive.url)? else {
+    return Ok(false);
+  };
+  if total_bytes < PARALLEL_DOWNLOAD_MIN_BYTES {
+    return Ok(false);
+  }
+
+  let ranges = parallel_ranges(total_bytes, PARALLEL_DOWNLOADS);
+  let progress = Arc::new(AtomicU64::new(0));
+  let result = thread::scope(|scope| {
+    let workers = ranges
+      .iter()
+      .enumerate()
+      .map(|(part_index, &(start, end))| {
+        let progress = Arc::clone(&progress);
+        let part_path = download_part_path(destination, part_index);
+        let worker_app = app.cloned();
+        scope.spawn(move || {
+          download_range(
+            worker_app.as_ref(),
+            client,
+            archive,
+            archive_index,
+            archive_count,
+            total_bytes,
+            start,
+            end,
+            &part_path,
+            &progress,
+          )
+        })
+      })
+      .collect::<Vec<_>>();
+
+    let mut first_error = None;
+    for worker in workers {
+      match worker.join() {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) if first_error.is_none() => first_error = Some(error),
+        Err(_) if first_error.is_none() => first_error = Some("並列ダウンロード処理が停止しました".into()),
+        _ => {}
+      }
+    }
+    first_error.map_or(Ok(()), Err)
+  });
+
+  if let Err(error) = result {
+    return Err(error);
+  }
+  combine_download_parts(destination, ranges.len())?;
+  if let Some(app) = app {
+    emit_progress(
+      app,
+      "downloading",
+      archive_index,
+      archive_count,
+      total_bytes,
+      Some(total_bytes),
+      format!("{}を並列ダウンロードしています…", archive.label),
+    );
+  }
+  Ok(true)
+}
+
+fn probe_range_size(client: &Client, url: &str) -> Result<Option<u64>, String> {
+  let response = client
+    .get(url)
+    .header(RANGE, "bytes=0-0")
+    .send()
+    .and_then(|response| response.error_for_status())
+    .map_err(|error| format!("分割ダウンロードを確認できません: {error}"))?;
+  if response.status() != StatusCode::PARTIAL_CONTENT {
+    return Ok(None);
+  }
+  Ok(
+    response
+      .headers()
+      .get(CONTENT_RANGE)
+      .and_then(|value| value.to_str().ok())
+      .and_then(parse_content_range_total),
+  )
+}
+
+fn parse_content_range_total(value: &str) -> Option<u64> {
+  let (range, total) = value.rsplit_once('/')?;
+  range.starts_with("bytes ").then_some(())?;
+  total.parse().ok().filter(|total| *total > 0)
+}
+
+fn parallel_ranges(total_bytes: u64, part_count: usize) -> Vec<(u64, u64)> {
+  if total_bytes == 0 {
+    return Vec::new();
+  }
+  let part_count = part_count.max(1).min(total_bytes as usize);
+  let part_size = (total_bytes + part_count as u64 - 1) / part_count as u64;
+  (0..part_count)
+    .filter_map(|index| {
+      let start = index as u64 * part_size;
+      (start < total_bytes).then(|| (start, (start + part_size - 1).min(total_bytes - 1)))
+    })
+    .collect()
+}
+
+fn download_part_path(destination: &Path, part_index: usize) -> PathBuf {
+  let name = destination.file_name().and_then(|name| name.to_str()).unwrap_or("download.zip");
+  destination.with_file_name(format!("{name}.part-{part_index}"))
+}
+
+fn cleanup_download_parts(destination: &Path) {
+  for part_index in 0..PARALLEL_DOWNLOADS {
+    let _ = fs::remove_file(download_part_path(destination, part_index));
+  }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn download_range(
+  app: Option<&AppHandle>,
+  client: &Client,
+  archive: &ComponentArchive,
+  archive_index: usize,
+  archive_count: usize,
+  total_bytes: u64,
+  start: u64,
+  end: u64,
+  destination: &Path,
+  progress: &AtomicU64,
+) -> Result<(), String> {
+  check_cancelled()?;
+  let expected_bytes = end - start + 1;
+  let mut response = client
+    .get(archive.url)
+    .header(RANGE, format!("bytes={start}-{end}"))
+    .send()
+    .and_then(|response| response.error_for_status())
+    .map_err(|error| format!("{}の一部を取得できません: {error}", archive.label))?;
+  if response.status() != StatusCode::PARTIAL_CONTENT {
+    return Err(format!("{}の配布元が分割取得に対応していません", archive.label));
+  }
+  let expected_range = format!("bytes {start}-{end}/");
+  let actual_range = response.headers().get(CONTENT_RANGE).and_then(|value| value.to_str().ok()).unwrap_or_default();
+  if !actual_range.starts_with(&expected_range) {
+    return Err(format!("{}の分割範囲を確認できません", archive.label));
+  }
+
+  let mut output = File::create(destination).map_err(|error| format!("分割ダウンロードを保存できません: {error}"))?;
+  let mut part_bytes = 0_u64;
+  let mut last_reported = 0_u64;
+  let mut buffer = vec![0_u8; 128 * 1024];
+  loop {
+    check_cancelled()?;
+    let count = response.read(&mut buffer).map_err(|error| format!("分割ダウンロード中に通信が切れました: {error}"))?;
+    if count == 0 {
+      break;
+    }
+    part_bytes += count as u64;
+    if part_bytes > expected_bytes {
+      return Err(format!("{}の分割データが指定サイズを超えています", archive.label));
+    }
+    output.write_all(&buffer[..count]).map_err(|error| format!("分割ダウンロードを保存できません: {error}"))?;
+    let downloaded_bytes = progress.fetch_add(count as u64, Ordering::Relaxed) + count as u64;
+    if part_bytes - last_reported >= DOWNLOAD_PROGRESS_STEP {
+      last_reported = part_bytes;
+      if let Some(app) = app {
+        emit_progress(
+          app,
+          "downloading",
+          archive_index,
+          archive_count,
+          downloaded_bytes,
+          Some(total_bytes),
+          format!("{}を並列ダウンロードしています…", archive.label),
+        );
+      }
+    }
+  }
+  output.flush().map_err(|error| format!("分割ダウンロードを保存できません: {error}"))?;
+  if part_bytes != expected_bytes {
+    return Err(format!("{}の分割データが不足しています", archive.label));
+  }
+  Ok(())
+}
+
+fn combine_download_parts(destination: &Path, part_count: usize) -> Result<(), String> {
+  let mut output = File::create(destination).map_err(|error| format!("ダウンロードファイルを保存できません: {error}"))?;
+  let mut buffer = vec![0_u8; 256 * 1024];
+  for part_index in 0..part_count {
+    check_cancelled()?;
+    let path = download_part_path(destination, part_index);
+    let mut part = File::open(&path).map_err(|error| format!("分割ダウンロードを読み込めません: {error}"))?;
+    loop {
+      check_cancelled()?;
+      let count = part.read(&mut buffer).map_err(|error| format!("分割ダウンロードを読み込めません: {error}"))?;
+      if count == 0 {
+        break;
+      }
+      output.write_all(&buffer[..count]).map_err(|error| format!("ダウンロードファイルを保存できません: {error}"))?;
+    }
+  }
+  output.flush().map_err(|error| format!("ダウンロードファイルを保存できません: {error}"))
+}
+
+fn download_archive_sequential(
+  app: Option<&AppHandle>,
+  client: &Client,
+  archive: &ComponentArchive,
+  archive_index: usize,
+  archive_count: usize,
+  destination: &Path,
+) -> Result<(), String> {
   let mut response = client
     .get(archive.url)
     .send()
@@ -443,12 +706,6 @@ fn download_archive(
     }
   }
   output.flush().map_err(|error| format!("ダウンロードデータを保存できません: {error}"))?;
-  drop(output);
-  if let Some(expected) = archive.archive_sha256 {
-    if !sha256_matches(destination, expected)? {
-      return Err(format!("{}の安全性を確認できませんでした", archive.label));
-    }
-  }
   Ok(())
 }
 
@@ -540,7 +797,26 @@ mod tests {
   }
 
   #[test]
-  #[ignore = "downloads about 61 MB from the Be Asset Optimizer component release"]
+  fn content_range_total_is_parsed_safely() {
+    assert_eq!(parse_content_range_total("bytes 0-0/64116338"), Some(64_116_338));
+    assert_eq!(parse_content_range_total("bytes 0-0/*"), None);
+    assert_eq!(parse_content_range_total("invalid/100"), None);
+    assert_eq!(parse_content_range_total("invalid"), None);
+  }
+
+  #[test]
+  fn parallel_ranges_cover_the_file_once() {
+    assert_eq!(parallel_ranges(10, 4), vec![(0, 2), (3, 5), (6, 8), (9, 9)]);
+    assert_eq!(parallel_ranges(3, 4), vec![(0, 0), (1, 1), (2, 2)]);
+    assert!(parallel_ranges(0, 4).is_empty());
+    let ranges = parallel_ranges(DOWNLOAD_BYTES, PARALLEL_DOWNLOADS);
+    assert_eq!(ranges.first().unwrap().0, 0);
+    assert_eq!(ranges.last().unwrap().1, DOWNLOAD_BYTES - 1);
+    assert_eq!(ranges.iter().map(|(start, end)| end - start + 1).sum::<u64>(), DOWNLOAD_BYTES);
+  }
+
+  #[test]
+  #[ignore = "downloads about 61 MB from the component release using four connections"]
   fn component_release_download_extract_and_verify() {
     INSTALL_CANCELLED.store(false, Ordering::SeqCst);
     let id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
@@ -550,7 +826,8 @@ mod tests {
     let client = Client::builder().user_agent(USER_AGENT).build().unwrap();
     for (index, archive) in PRIMARY_ARCHIVES.iter().enumerate() {
       let archive_path = root.join(format!("archive-{index}.zip"));
-      download_archive(None, &client, archive, index + 1, PRIMARY_ARCHIVES.len(), &archive_path).unwrap();
+      assert!(download_archive_parallel(None, &client, archive, index + 1, PRIMARY_ARCHIVES.len(), &archive_path).unwrap());
+      assert!(sha256_matches(&archive_path, archive.archive_sha256.unwrap()).unwrap());
       extract_components(&archive_path, &staging, archive.files).unwrap();
     }
     assert!(component_root_verified(&staging).unwrap());
