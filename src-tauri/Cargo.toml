@@ -23,3 +23,6 @@ bytemuck = "1.24.0"
 base64 = "0.22.1"
 heif-oxide = "0.1.0"
 rayon = "1.11.0"
+reqwest = { version = "0.12.24", default-features = false, features = ["blocking", "rustls-tls"] }
+sha2 = "0.10.9"
+zip = { version = "2.4.2", default-features = false, features = ["deflate"] }

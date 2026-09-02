@@ -3,13 +3,13 @@
   "productName": "Be Asset Optimizer",
   "version": "0.5.0",
   "identifier": "com.smartpng.desktop",
-  "build": { "beforeDevCommand": "npm run prepare:ai && npm run dev", "devUrl": "http://localhost:1420", "beforeBuildCommand": "npm run prepare:ai && npm run build", "frontendDist": "../dist" },
+  "build": { "beforeDevCommand": "npm run dev", "devUrl": "http://localhost:1420", "beforeBuildCommand": "npm run build", "frontendDist": "../dist" },
   "app": { "windows": [{ "title": "Be Asset Optimizer — Blender向けアセット最適化", "width": 1180, "height": 760, "minWidth": 960, "minHeight": 640 }], "security": { "csp": null, "assetProtocol": { "enable": true, "scope": [] } } },
   "bundle": {
     "active": true,
     "targets": "all",
     "icon": ["icons/icon.ico", "icons/icon.icns", "icons/icon.png"],
-    "resources": ["resources/realesrgan/**/*"],
+    "resources": ["resources/realesrgan/LICENSE-Real-ESRGAN.txt", "resources/realesrgan/LICENSE-Real-ESRGAN-ncnn-vulkan.txt", "resources/realesrgan/component.json"],
     "windows": { "nsis": { "languages": ["Japanese"] } }
   }
 }

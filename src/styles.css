@@ -65,6 +65,16 @@ main { display: flex; flex-direction: column; gap: 12px; }
 .file > div { flex: 1 1 auto; min-width: 0; }
 .file strong, .file small { max-width: 100%; }
 .mode-note { color: #7f8aa0; font-size: 10px; line-height: 1.5; margin-top: 10px; }
+.ai-component-card { display: grid; gap: 7px; margin-bottom: 12px; padding: 10px; border: 1px solid #4b3d28; border-radius: 8px; background: #211d17; }
+.ai-component-card.installed { border-color: #28513f; background: #17231e; }
+.ai-component-card strong, .ai-component-card span, .ai-component-card small { display: block; }
+.ai-component-card strong { color: #f2d39a; font-size: 11px; }
+.ai-component-card.installed strong { color: #7be2b3; }
+.ai-component-card span, .ai-component-card small { margin-top: 3px; color: #9b8e7b; font-size: 9px; line-height: 1.4; }
+.ai-component-card.installed span { color: #83a394; }
+.ai-component-card progress { width: 100%; height: 7px; accent-color: #23865f; }
+.ai-component-card button { border: 1px solid #4b566b; border-radius: 6px; padding: 6px 8px; background: #252c3a; color: #dbe4f3; font-size: 10px; }
+.ai-component-card .component-install { border-color: #23865f; background: #23865f; color: #ffffff; font-weight: 750; }
 
 /* 100%表示でも情報量を保ったまま収まる、デスクトップ向けの高密度レイアウト。 */
 main { padding: 14px 16px; gap: 8px; }
@@ -147,6 +157,14 @@ legend { margin-bottom: 8px; }
 [data-theme="light"] .atlas-tile-caption small, [data-theme="light"] .atlas-empty small { color: #748195; }
 [data-theme="light"] .atlas-empty { color: #536176; }
 [data-theme="light"] .atlas-actions button { background: #ffffff; border-color: #c8d1dd; color: #405068; }
+[data-theme="light"] .ai-component-card { border-color: #e2cba7; background: #fff8ed; }
+[data-theme="light"] .ai-component-card.installed { border-color: #add9c6; background: #edf9f3; }
+[data-theme="light"] .ai-component-card strong { color: #8d5e17; }
+[data-theme="light"] .ai-component-card.installed strong { color: #16714e; }
+[data-theme="light"] .ai-component-card span, [data-theme="light"] .ai-component-card small { color: #7c6b52; }
+[data-theme="light"] .ai-component-card.installed span { color: #557869; }
+[data-theme="light"] .ai-component-card button { border-color: #cbd4df; background: #ffffff; color: #3d4b60; }
+[data-theme="light"] .ai-component-card .component-install { border-color: #23865f; background: #23865f; color: #ffffff; }
 
 /* FBX preview with relative texture diagnostics. */
 .model-preview-empty, .model-preview { flex: 1 1 auto; min-height: 0; overflow: hidden; border: 1px solid #2b3344; border-radius: 12px; background: #1a1f2a; }

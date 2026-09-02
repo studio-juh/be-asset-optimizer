@@ -1,5 +1,7 @@
 #![windows_subsystem = "windows"]
 
+mod ai_components;
+
 use std::{
   collections::{HashMap, HashSet},
   fs,
@@ -16,6 +18,7 @@ use image::{imageops::FilterType, GenericImageView, ImageDecoder, ImageEncoder};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
+use ai_components::{resolve_realesrgan_runtime, RealEsrganRuntime};
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -309,35 +312,6 @@ fn emit_normal(app: &AppHandle, path: &str, status: Status, output_bytes: Option
 
 fn emit_ai_restore(app: &AppHandle, path: &str, status: Status, output_bytes: Option<u64>, output_width: Option<u32>, output_height: Option<u32>, message: Option<String>, output_path: Option<String>) {
   let _ = app.emit("ai-restore-job-progress", Progress { path: path.into(), status, output_bytes, output_width, output_height, message, output_path });
-}
-
-struct RealEsrganRuntime { executable: PathBuf, working_dir: PathBuf }
-
-fn resolve_realesrgan_runtime(app: &AppHandle) -> Result<RealEsrganRuntime, String> {
-  let mut candidates = Vec::new();
-  if let Ok(resource_dir) = app.path().resource_dir() {
-    candidates.push(resource_dir.join("resources").join("realesrgan"));
-    candidates.push(resource_dir.join("realesrgan"));
-  }
-  if let Ok(executable) = std::env::current_exe() {
-    if let Some(parent) = executable.parent() {
-      candidates.push(parent.join("resources").join("realesrgan"));
-    }
-  }
-  #[cfg(debug_assertions)]
-  candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources").join("realesrgan"));
-
-  for working_dir in candidates {
-    let executable = working_dir.join("realesrgan-ncnn-vulkan.exe");
-    let detailed_model = working_dir.join("models").join("realesrgan-x4plus.bin");
-    let detailed_parameters = working_dir.join("models").join("realesrgan-x4plus.param");
-    let natural_model = working_dir.join("models").join("realesrnet-x4plus.bin");
-    let natural_parameters = working_dir.join("models").join("realesrnet-x4plus.param");
-    if executable.is_file() && detailed_model.is_file() && detailed_parameters.is_file() && natural_model.is_file() && natural_parameters.is_file() {
-      return Ok(RealEsrganRuntime { executable, working_dir });
-    }
-  }
-  Err("AI復元モデルが見つかりません。アプリを再インストールしてください".into())
 }
 
 fn run_realesrgan(runtime: &RealEsrganRuntime, input: &Path, output: &Path, tile_size: u32, model_name: &str) -> Result<(), String> {
@@ -1098,7 +1072,7 @@ fn main() {
   tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_opener::init())
-    .invoke_handler(tauri::generate_handler![inspect_files, create_preview, load_model_package, process_batch, process_normal_batch, process_ai_restore_batch, create_texture_atlas])
+    .invoke_handler(tauri::generate_handler![inspect_files, create_preview, load_model_package, process_batch, process_normal_batch, process_ai_restore_batch, create_texture_atlas, ai_components::get_ai_component_status, ai_components::install_ai_components, ai_components::cancel_ai_component_install, ai_components::remove_ai_components])
     .run(tauri::generate_context!())
     .expect("Be Asset Optimizer の起動に失敗しました");
 }
