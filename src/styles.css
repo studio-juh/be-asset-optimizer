@@ -75,6 +75,12 @@ main { display: flex; flex-direction: column; gap: 12px; }
 .ai-component-card progress { width: 100%; height: 7px; accent-color: #23865f; }
 .ai-component-card button { border: 1px solid #4b566b; border-radius: 6px; padding: 6px 8px; background: #252c3a; color: #dbe4f3; font-size: 10px; }
 .ai-component-card .component-install { border-color: #23865f; background: #23865f; color: #ffffff; font-weight: 750; }
+.ai-component-card .component-accordion-toggle { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; border: 0; padding: 0; background: transparent; color: inherit; text-align: left; }
+.component-status-text { flex: 1 1 auto; min-width: 0; margin: 0 !important; }
+.ai-component-card .component-chevron { flex: 0 0 auto; margin: 0; color: #72c9a3; font-size: 16px; line-height: 1; transform: rotate(0deg); transition: transform .16s ease; }
+.ai-component-card .component-accordion-toggle.open .component-chevron { transform: rotate(180deg); }
+.component-accordion-content { display: grid; gap: 7px; padding-top: 8px; border-top: 1px solid #28513f; }
+.ai-component-card .component-remove { border-color: #69424a; background: #3a252a; color: #ffc1c8; }
 .ai-feature-disabled { opacity: .42; filter: grayscale(.65); pointer-events: none; user-select: none; }
 .ai-feature-disabled button:disabled { opacity: 1; }
 
@@ -167,6 +173,9 @@ legend { margin-bottom: 8px; }
 [data-theme="light"] .ai-component-card.installed span { color: #557869; }
 [data-theme="light"] .ai-component-card button { border-color: #cbd4df; background: #ffffff; color: #3d4b60; }
 [data-theme="light"] .ai-component-card .component-install { border-color: #23865f; background: #23865f; color: #ffffff; }
+[data-theme="light"] .ai-component-card .component-accordion-toggle { border: 0; background: transparent; color: inherit; }
+[data-theme="light"] .component-accordion-content { border-color: #add9c6; }
+[data-theme="light"] .ai-component-card .component-remove { border-color: #e1b7bc; background: #fff3f4; color: #9b3542; }
 
 /* FBX preview with relative texture diagnostics. */
 .model-preview-empty, .model-preview { flex: 1 1 auto; min-height: 0; overflow: hidden; border: 1px solid #2b3344; border-radius: 12px; background: #1a1f2a; }

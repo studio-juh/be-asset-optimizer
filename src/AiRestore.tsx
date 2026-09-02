@@ -28,6 +28,7 @@ export default function AiRestore() {
   const [isLoading, setIsLoading] = useState(false);
   const [componentStatus, setComponentStatus] = useState<AiComponentStatus | null>(null);
   const [isInstalling, setIsInstalling] = useState(false);
+  const [componentPanelOpen, setComponentPanelOpen] = useState(false);
   const [componentProgress, setComponentProgress] = useState<AiComponentProgress | null>(null);
   const loadingRequestId = useRef("");
   const componentInstalledRef = useRef(false);
@@ -95,6 +96,7 @@ export default function AiRestore() {
       const status = await invoke<AiComponentStatus>("install_ai_components");
       componentInstalledRef.current = status.installed;
       setComponentStatus(status);
+      setComponentPanelOpen(false);
       setNotice("AI機能を追加しました");
     } catch (error) {
       setNotice(String(error));
@@ -109,6 +111,7 @@ export default function AiRestore() {
       const status = await invoke<AiComponentStatus>("remove_ai_components");
       componentInstalledRef.current = status.installed;
       setComponentStatus(status);
+      setComponentPanelOpen(false);
       setComponentProgress(null);
       setNotice("AIコンポーネントを削除しました");
     } catch (error) { setNotice(`削除できませんでした: ${String(error)}`); }
@@ -130,8 +133,16 @@ export default function AiRestore() {
     <aside className="settings ai-restore-settings">
       <h2>AI復元設定</h2>
       <div className={`ai-component-card ${componentStatus?.installed ? "installed" : "missing"}`}>
-        <div><strong>{componentStatus === null ? "AI機能を確認中…" : componentStatus.installed ? "AI機能を使用できます" : "AI機能は未追加です"}</strong><span>{componentStatus?.installed ? (componentStatus.source === "downloaded" ? `追加済みコンポーネント（${formatBytes(componentStatus.totalBytes)}）` : "同梱コンポーネント") : componentStatus ? `${formatBytes(componentStatus.downloadBytes)}を取得します（保存後${formatBytes(componentStatus.totalBytes)}）` : "必要なデータを確認しています"}</span></div>
-        {isInstalling ? <><progress value={componentProgress?.downloadedBytes ?? 0} max={componentProgress?.totalBytes ?? 1} /><small>{componentProgress?.message ?? "準備しています…"}{componentProgress?.archiveIndex ? `（${componentProgress.archiveIndex}/${componentProgress.archiveCount}）` : ""}</small><button onClick={cancelComponentInstall}>キャンセル</button></> : componentStatus?.installed ? (componentStatus.source === "downloaded" && <button onClick={removeComponents}>削除</button>) : <button className="component-install" onClick={installComponents} disabled={componentStatus === null}>AI機能を追加</button>}
+        {componentStatus?.installed ? <>
+          <button className={`component-accordion-toggle ${componentPanelOpen ? "open" : ""}`} onClick={() => setComponentPanelOpen((open) => !open)} aria-expanded={componentPanelOpen}>
+            <span className="component-status-text"><strong>AI機能を使用できます</strong><span>{componentStatus.source === "downloaded" ? `追加済みコンポーネント（${formatBytes(componentStatus.totalBytes)}）` : "同梱コンポーネント"}</span></span>
+            <span className="component-chevron" aria-hidden="true">⌄</span>
+          </button>
+          {componentPanelOpen && <div className="component-accordion-content"><small>{componentStatus.source === "downloaded" ? "不要になった場合のみ、追加データを削除できます。" : "このコンポーネントはアプリに同梱されています。"}</small>{componentStatus.source === "downloaded" && <button className="component-remove" onClick={removeComponents}>AIコンポーネントを削除</button>}</div>}
+        </> : <>
+          <div><strong>{componentStatus === null ? "AI機能を確認中…" : "AI機能は未追加です"}</strong><span>{componentStatus ? `${formatBytes(componentStatus.downloadBytes)}を取得します（保存後${formatBytes(componentStatus.totalBytes)}）` : "必要なデータを確認しています"}</span></div>
+          {isInstalling ? <><progress value={componentProgress?.downloadedBytes ?? 0} max={componentProgress?.totalBytes ?? 1} /><small>{componentProgress?.message ?? "準備しています…"}{componentProgress?.archiveIndex ? `（${componentProgress.archiveIndex}/${componentProgress.archiveCount}）` : ""}</small><button onClick={cancelComponentInstall}>キャンセル</button></> : <button className="component-install" onClick={installComponents} disabled={componentStatus === null}>AI機能を追加</button>}
+        </>}
       </div>
       <div className={!aiAvailable ? "ai-feature-disabled" : ""} aria-disabled={!aiAvailable}>
         <label>出力先<div className="path-row"><input value={outputDir} onChange={(event) => setOutputDir(event.target.value)} placeholder="入力元 / ai_restored" disabled={!aiAvailable} /><button onClick={chooseOutput} disabled={!aiAvailable}>選択</button></div></label>
