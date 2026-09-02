@@ -22,7 +22,7 @@ use zip::ZipArchive;
 
 const COMPONENT_BYTES: u64 = 73_425_210;
 const DOWNLOAD_BYTES: u64 = 64_116_338;
-const USER_AGENT: &str = "Be-Asset-Optimizer/0.5";
+const USER_AGENT: &str = concat!("Be-Asset-Optimizer/", env!("CARGO_PKG_VERSION"));
 const PARALLEL_DOWNLOADS: usize = 4;
 const PARALLEL_DOWNLOAD_MIN_BYTES: u64 = 8 * 1024 * 1024;
 const DOWNLOAD_PROGRESS_STEP: u64 = 512 * 1024;

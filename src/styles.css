@@ -92,6 +92,7 @@ main { padding: 14px 16px; gap: 8px; }
 .display-scale, .theme-control { position: static; display: flex; align-items: center; gap: 5px; margin: 0; color: #8f9bb1; font-size: 11px; }
 .display-scale select { width: 110px; padding: 4px 7px; }
 .theme-control select { width: 116px; padding: 4px 7px; }
+.view-controls select, .view-controls select option { background: #181d27; color: #dce4f1; }
 .workspace { grid-template-columns: 272px minmax(0, 1fr); gap: 12px; }
 .settings { padding: 14px; }
 .settings h2 { margin-bottom: 12px; }
@@ -134,6 +135,7 @@ legend { margin-bottom: 8px; }
 [data-theme="light"] .tab-separator { background: #c6cfda; }
 [data-theme="light"] .view-controls { background: #ffffff; border-color: #ccd5e0; box-shadow: 0 2px 8px rgba(38, 51, 70, .08); }
 [data-theme="light"] .display-scale, [data-theme="light"] .theme-control { color: #68758a; }
+[data-theme="light"] .view-controls select, [data-theme="light"] .view-controls select option { background: #ffffff; color: #39465a; }
 [data-theme="light"] .queue-toolbar { border-color: #dde3eb; }
 [data-theme="light"] .queue-toolbar h2 span { color: #1a8f62; }
 [data-theme="light"] .queue-toolbar p, [data-theme="light"] .queue-footer { color: #69768a; }
