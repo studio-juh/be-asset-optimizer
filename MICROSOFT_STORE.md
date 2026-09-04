@@ -46,7 +46,7 @@ This keeps Store versions increasing across the application's `0.x` to `1.x` tra
 - Architecture: x64
 - Device family: Windows Desktop
 - Minimum Windows version: Windows 10, version 2004 (`10.0.19041.0`)
-- Language: Japanese (`ja-jp`)
+- Languages: English (`en-us`, default) and Japanese (`ja-jp`)
 - Restricted capability: `runFullTrust`
 - Privacy policy: <https://github.com/studio-juh/be-asset-optimizer/blob/master/PRIVACY.md>
 - Support: <https://github.com/studio-juh/be-asset-optimizer/issues>

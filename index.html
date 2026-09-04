@@ -1,10 +1,15 @@
 <!doctype html>
-<html lang="ja" data-theme="light">
+<html lang="en" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Be Asset Optimizer — Blender向けアセット最適化</title>
-    <script>document.documentElement.dataset.theme = localStorage.getItem("smartpng-theme-v1") === "dark" ? "dark" : "light";</script>
+    <title>Be Asset Optimizer — Blender Asset Optimization</title>
+    <script>
+      const isJapanese = /^ja(?:-|$)/i.test(navigator.language);
+      document.documentElement.lang = isJapanese ? "ja" : "en";
+      document.documentElement.dataset.theme = localStorage.getItem("smartpng-theme-v1") === "dark" ? "dark" : "light";
+      if (isJapanese) document.title = "Be Asset Optimizer — Blender向けアセット最適化";
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -93,6 +93,10 @@ main { padding: 14px 16px; gap: 8px; }
 .display-scale select { width: 110px; padding: 4px 7px; }
 .theme-control select { width: 116px; padding: 4px 7px; }
 .view-controls select, .view-controls select option { background: #181d27; color: #dce4f1; }
+:root:lang(en) .tabs { padding-right: 300px; }
+:root:lang(en) .tabs button { padding-inline: 7px; font-size: 11px; }
+:root:lang(en) .tab-separator { margin-inline: 3px; }
+:root:lang(en) .view-controls { gap: 5px; }
 .workspace { grid-template-columns: 272px minmax(0, 1fr); gap: 12px; }
 .settings { padding: 14px; }
 .settings h2 { margin-bottom: 12px; }

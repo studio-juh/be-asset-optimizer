@@ -8,6 +8,7 @@ import { DDSLoader } from "three/examples/jsm/loaders/DDSLoader.js";
 import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { TGALoader } from "three/examples/jsm/loaders/TGALoader.js";
+import { localizedDetail, t } from "./i18n";
 
 type TextureFile = { path: string; relativePath: string; name: string; bytes: number };
 type ModelPackage = { path: string; name: string; bytesBase64: string; fileBytes: number; textures: TextureFile[]; scanLimited: boolean };
@@ -28,7 +29,7 @@ export default function ModelPreview() {
   const actionRef = useRef<THREE.AnimationAction | null>(null);
   const autoRotateRef = useRef(false);
   const [model, setModel] = useState<ModelPackage>();
-  const [notice, setNotice] = useState("FBXをドロップしてください");
+  const [notice, setNotice] = useState(t("FBXをドロップしてください", "Drop an FBX file"));
   const [loading, setLoading] = useState(false);
   const [wireframe, setWireframe] = useState(false);
   const [showGrid, setShowGrid] = useState(true);
@@ -38,22 +39,22 @@ export default function ModelPreview() {
   const [stats, setStats] = useState<ModelStats>(emptyStats);
 
   const loadModel = async (path: string) => {
-    if (!isModelPath(path)) { setNotice("FBXまたはGLBファイルを選択してください"); return; }
+    if (!isModelPath(path)) { setNotice(t("FBXまたはGLBファイルを選択してください", "Choose an FBX or GLB file")); return; }
     setLoading(true);
-    setNotice("3Dモデルとテクスチャを確認しています…");
+    setNotice(t("3Dモデルとテクスチャを確認しています…", "Inspecting the 3D model and textures…"));
     try {
       const loaded = await invoke<ModelPackage>("load_model_package", { path });
       setModel(loaded);
       setResolutions([]);
-      setNotice("モデルを読み込みました");
+      setNotice(t("モデルを読み込みました", "Model loaded"));
     } catch (error) {
       setModel(undefined);
-      setNotice(String(error));
+      setNotice(localizedDetail(error, "Could not load the 3D model"));
     } finally { setLoading(false); }
   };
 
   const chooseModel = async () => {
-    const selected = await open({ multiple: false, filters: [{ name: "3Dモデル", extensions: ["fbx", "glb"] }] });
+    const selected = await open({ multiple: false, filters: [{ name: t("3Dモデル", "3D Models"), extensions: ["fbx", "glb"] }] });
     if (typeof selected === "string") await loadModel(selected);
   };
 
@@ -61,7 +62,7 @@ export default function ModelPreview() {
     const onDrop = (event: Event) => {
       const paths = (event as CustomEvent<string[]>).detail;
       const modelPath = paths.find(isModelPath);
-      if (modelPath) void loadModel(modelPath); else setNotice("FBXまたはGLBファイルをドロップしてください");
+      if (modelPath) void loadModel(modelPath); else setNotice(t("FBXまたはGLBファイルをドロップしてください", "Drop an FBX or GLB file"));
     };
     const onMenuOpen = () => { void chooseModel(); };
     window.addEventListener("smartpng-model-drop", onDrop);
@@ -184,7 +185,7 @@ export default function ModelPreview() {
         actionRef.current = action;
       }
       window.setTimeout(flushResolutions, 0);
-      setNotice(`${model.name}を表示しています`);
+      setNotice(t(`${model.name}を表示しています`, `Displaying ${model.name}`));
 
       const resize = () => {
         const width = Math.max(viewport.clientWidth, 1);
@@ -212,12 +213,12 @@ export default function ModelPreview() {
     const bytes = decodeBase64(model.bytesBase64);
     try {
       if (model.path.toLowerCase().endsWith(".glb")) {
-        new GLTFLoader(manager).parse(bytes, "", (gltf) => showModel(gltf.scene, gltf.animations), (error) => setNotice(`GLBを表示できません: ${String(error)}`));
+        new GLTFLoader(manager).parse(bytes, "", (gltf) => showModel(gltf.scene, gltf.animations), (error) => setNotice(t(`GLBを表示できません: ${String(error)}`, `Could not display the GLB: ${localizedDetail(error, "The model could not be parsed")}`)));
       } else {
         const loadedRoot = new FBXLoader(manager).parse(bytes, "");
         showModel(loadedRoot, loadedRoot.animations);
       }
-    } catch (error) { setNotice(`3Dモデルを表示できません: ${String(error)}`); }
+    } catch (error) { setNotice(t(`3Dモデルを表示できません: ${String(error)}`, `Could not display the 3D model: ${localizedDetail(error, "The model could not be parsed")}`)); }
 
     return () => {
       disposed = true;
@@ -255,8 +256,8 @@ export default function ModelPreview() {
 
   if (!model) return <section className="model-preview-empty">
     <button className="drop-zone" onClick={chooseModel} disabled={loading}>
-      <strong>{loading ? "読み込み中…" : "FBX / GLBをドロップ"}</strong>
-      <span>FBXの相対テクスチャとGLBの埋め込み画像に対応</span>
+      <strong>{loading ? t("読み込み中…", "Loading…") : t("FBX / GLBをドロップ", "Drop FBX / GLB")}</strong>
+      <span>{t("FBXの相対テクスチャとGLBの埋め込み画像に対応", "Supports relative FBX textures and embedded GLB images")}</span>
       <small>{notice}</small>
     </button>
   </section>;
@@ -264,30 +265,30 @@ export default function ModelPreview() {
   const missingCount = resolutions.filter((item) => item.status !== "found").length;
   return <section className="model-preview">
     <div className="model-toolbar">
-      <div className="model-title"><strong title={model.path}>{model.name}</strong><span>{formatBytes(model.fileBytes)} ・ メッシュ {stats.meshes} ・ 三角形 {stats.triangles.toLocaleString()}</span></div>
-      <div className="model-actions"><button onClick={chooseModel}>別のモデル</button><button onClick={() => revealItemInDir(model.path)}>保存場所</button></div>
+      <div className="model-title"><strong title={model.path}>{model.name}</strong><span>{t(`${formatBytes(model.fileBytes)} ・ メッシュ ${stats.meshes} ・ 三角形 ${stats.triangles.toLocaleString()}`, `${formatBytes(model.fileBytes)} · ${stats.meshes} meshes · ${stats.triangles.toLocaleString()} triangles`)}</span></div>
+      <div className="model-actions"><button onClick={chooseModel}>{t("別のモデル", "Choose Another")}</button><button onClick={() => revealItemInDir(model.path)}>{t("保存場所", "Show Location")}</button></div>
     </div>
     <div className="model-content">
       <div className="model-stage">
         <div ref={viewportRef} className="model-viewport" />
         <div className="model-view-options">
-          <label><input type="checkbox" checked={showGrid} onChange={(event) => setShowGrid(event.target.checked)} />グリッド</label>
-          <label><input type="checkbox" checked={wireframe} onChange={(event) => setWireframe(event.target.checked)} />ワイヤー</label>
-          <label><input type="checkbox" checked={autoRotate} onChange={(event) => setAutoRotate(event.target.checked)} />自動回転</label>
-          <button onClick={resetRotation}>回転リセット</button>
-          {stats.animations > 0 && <button onClick={() => setPlaying((value) => !value)}>{playing ? "停止" : "再生"}</button>}
+          <label><input type="checkbox" checked={showGrid} onChange={(event) => setShowGrid(event.target.checked)} />{t("グリッド", "Grid")}</label>
+          <label><input type="checkbox" checked={wireframe} onChange={(event) => setWireframe(event.target.checked)} />{t("ワイヤー", "Wireframe")}</label>
+          <label><input type="checkbox" checked={autoRotate} onChange={(event) => setAutoRotate(event.target.checked)} />{t("自動回転", "Auto Rotate")}</label>
+          <button onClick={resetRotation}>{t("回転リセット", "Reset Rotation")}</button>
+          {stats.animations > 0 && <button onClick={() => setPlaying((value) => !value)}>{playing ? t("停止", "Pause") : t("再生", "Play")}</button>}
         </div>
-        <div className="model-help">左ドラッグ：回転　右ドラッグ：移動　ホイール：ズーム</div>
+        <div className="model-help">{t("左ドラッグ：回転　右ドラッグ：移動　ホイール：ズーム", "Left drag: rotate · Right drag: pan · Wheel: zoom")}</div>
       </div>
       <aside className="model-inspector">
-        <div className="model-summary"><div><span>テクスチャ候補</span><strong>{model.textures.length}</strong></div><div className={missingCount ? "warning" : "ok"}><span>不足・読込失敗</span><strong>{missingCount}</strong></div></div>
-        <h3>テクスチャ参照</h3>
+        <div className="model-summary"><div><span>{t("テクスチャ候補", "Texture Candidates")}</span><strong>{model.textures.length}</strong></div><div className={missingCount ? "warning" : "ok"}><span>{t("不足・読込失敗", "Missing / Failed")}</span><strong>{missingCount}</strong></div></div>
+        <h3>{t("テクスチャ参照", "Texture References")}</h3>
         {resolutions.length ? <div className="texture-resolution-list">{resolutions.map((item, index) => <div className={`texture-resolution ${item.status}`} key={`${item.request}-${index}`}>
           <span className="resolution-mark">{item.status === "found" ? "✓" : "!"}</span>
           <div><strong title={item.request}>{fileName(item.request)}</strong><small title={item.resolvedPath ?? item.request}>{item.resolvedPath ? relativeForDisplay(item.resolvedPath, model.path) : item.request}</small></div>
-        </div>)}</div> : <p className="model-empty-note">外部テクスチャ参照は検出されませんでした。GLBの埋め込み画像、またはマテリアルなしの可能性があります。</p>}
-        {model.scanLimited && <p className="model-warning">画像が多いため、探索は1,500件で打ち切りました。</p>}
-        <div className="model-stats"><span>マテリアル {stats.materials}</span><span>アニメーション {stats.animations}</span></div>
+        </div>)}</div> : <p className="model-empty-note">{t("外部テクスチャ参照は検出されませんでした。GLBの埋め込み画像、またはマテリアルなしの可能性があります。", "No external texture references were detected. The model may use embedded GLB images or have no materials.")}</p>}
+        {model.scanLimited && <p className="model-warning">{t("画像が多いため、探索は1,500件で打ち切りました。", "The texture scan stopped after 1,500 files.")}</p>}
+        <div className="model-stats"><span>{t(`マテリアル ${stats.materials}`, `Materials ${stats.materials}`)}</span><span>{t(`アニメーション ${stats.animations}`, `Animations ${stats.animations}`)}</span></div>
       </aside>
     </div>
   </section>;
