@@ -4,6 +4,7 @@ version = "0.6.1"
 description = "Blender-oriented texture and 3D asset optimizer"
 authors = ["Be Asset Optimizer contributors"]
 edition = "2021"
+default-run = "be-asset-optimizer"
 license = "GPL-3.0-or-later"
 
 [build-dependencies]
@@ -14,6 +15,7 @@ tauri = { version = "2.9.5", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2.4.0"
 tauri-plugin-opener = "2.5.0"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 image = { version = "0.25.9", default-features = false, features = ["png", "jpeg", "webp", "bmp", "tiff", "gif", "tga", "dds"] }
 webp = "0.3.1"
 imagequant = "4.4.1"
