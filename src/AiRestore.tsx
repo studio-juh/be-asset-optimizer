@@ -6,6 +6,7 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import Thumbnail from "./Thumbnail";
 import { InspectProgress, InspectResult, supportedImageFilter, supportedImageShortLabel } from "./imageFiles";
 import { localizedDetail, t } from "./i18n";
+import { storePreview } from "./storePreview";
 
 type Status = "ready" | "processing" | "done" | "skipped" | "failed";
 type Job = { id: string; path: string; name: string; originalBytes: number; width: number; height: number; status: Status; outputBytes?: number; outputWidth?: number; outputHeight?: number; message?: string; outputPath?: string };
@@ -13,6 +14,14 @@ type Metadata = Omit<Job, "id" | "status">;
 type Progress = { path: string; status: Status; output_bytes?: number; output_width?: number; output_height?: number; message?: string; output_path?: string };
 type AiComponentStatus = { installed: boolean; source: "downloaded" | "bundled" | "missing"; installDir: string; totalBytes: number; downloadBytes: number };
 type AiComponentProgress = { phase: string; archiveIndex: number; archiveCount: number; downloadedBytes: number; totalBytes?: number; message: string };
+
+const previewComponentStatus: AiComponentStatus = {
+  installed: true,
+  source: "bundled",
+  installDir: "",
+  totalBytes: 0,
+  downloadBytes: 0,
+};
 
 const formatBytes = (bytes?: number) => bytes === undefined ? "—" : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 const label = (status: Status) => ({ ready: t("準備完了", "Ready"), processing: t("復元中", "Restoring"), done: t("完了", "Done"), skipped: t("スキップ", "Skipped"), failed: t("失敗", "Failed") })[status];
@@ -27,12 +36,12 @@ export default function AiRestore() {
   const [seamlessTiles, setSeamlessTiles] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [componentStatus, setComponentStatus] = useState<AiComponentStatus | null>(null);
+  const [componentStatus, setComponentStatus] = useState<AiComponentStatus | null>(storePreview ? previewComponentStatus : null);
   const [isInstalling, setIsInstalling] = useState(false);
   const [componentPanelOpen, setComponentPanelOpen] = useState(false);
   const [componentProgress, setComponentProgress] = useState<AiComponentProgress | null>(null);
   const loadingRequestId = useRef("");
-  const componentInstalledRef = useRef(false);
+  const componentInstalledRef = useRef(storePreview);
   const [notice, setNotice] = useState(t(`復元する${supportedImageShortLabel}をここへドロップしてください`, `Drop ${supportedImageShortLabel} to restore here`));
   const aiAvailable = componentStatus?.installed === true;
 
@@ -62,6 +71,7 @@ export default function AiRestore() {
   };
 
   useEffect(() => {
+    if (storePreview) return;
     const offProgress = listen<Progress>("ai-restore-job-progress", (event) => {
       const update = event.payload;
       setJobs((current) => current.map((job) => job.path === update.path ? { ...job, status: update.status, outputBytes: update.output_bytes, outputWidth: update.output_width, outputHeight: update.output_height, message: update.message ? localizedDetail(update.message, update.status === "done" ? "AI restoration completed" : update.status === "failed" ? "AI restoration failed" : "Restoring with AI") : undefined, outputPath: update.output_path } : job));

@@ -11,6 +11,7 @@ import TextureAtlas from "./TextureAtlas";
 import Thumbnail from "./Thumbnail";
 import { InspectProgress, InspectResult, supportedImageFilter, supportedImageShortLabel } from "./imageFiles";
 import { locale, localizedDetail, t } from "./i18n";
+import { storePreview, storePreviewTab, StorePreviewTab } from "./storePreview";
 
 const ModelPreview = lazy(() => import("./ModelPreview"));
 
@@ -89,7 +90,7 @@ const dimensions = (width?: number, height?: number) =>
   width && height ? `${width} × ${height}` : "—";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<"optimize" | "restore" | "normal" | "atlas" | "preview">("optimize");
+  const [activeTab, setActiveTab] = useState<StorePreviewTab>(storePreviewTab);
   const activeTabRef = useRef(activeTab);
   const [displayScale, setDisplayScale] = useState(() => {
     const saved = Number(localStorage.getItem("smartpng-display-scale-v2"));
@@ -104,11 +105,16 @@ export default function App() {
   const [notice, setNotice] = useState(t(`${supportedImageShortLabel}をここへドロップしてください`, `Drop ${supportedImageShortLabel} here`));
 
   useEffect(() => {
+    if (storePreview) {
+      document.title = t("Be Asset Optimizer — Blender向けアセット最適化", "Be Asset Optimizer — Blender Asset Optimization");
+      return;
+    }
     void invoke("set_ui_locale", { locale });
     void getCurrentWindow().setTitle(t("Be Asset Optimizer — Blender向けアセット最適化", "Be Asset Optimizer — Blender Asset Optimization"));
   }, []);
 
   useEffect(() => {
+    if (storePreview) return;
     const unlistenProgress = listen<Progress>("job-progress", (event) => {
       const update = event.payload;
       setJobs((current) => current.map((job) => job.path === update.path ? {
@@ -145,7 +151,7 @@ export default function App() {
   }, [activeTab]);
 
   useEffect(() => {
-    void getCurrentWebview().setZoom(displayScale);
+    if (!storePreview) void getCurrentWebview().setZoom(displayScale);
     localStorage.setItem("smartpng-display-scale-v2", String(displayScale));
   }, [displayScale]);
 
@@ -192,6 +198,7 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (storePreview) return;
     const unlistenMenu = listen<string>("app-menu-action", (event) => {
       switch (event.payload) {
         case "file-open":

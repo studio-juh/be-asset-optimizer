@@ -1,6 +1,8 @@
+import { storePreviewLanguage } from "./storePreview";
+
 export type AppLocale = "en" | "ja";
 
-const detectedLanguage = typeof navigator === "undefined" ? "en" : navigator.language;
+const detectedLanguage = storePreviewLanguage ?? (typeof navigator === "undefined" ? "en" : navigator.language);
 
 export const locale: AppLocale = /^ja(?:-|$)/i.test(detectedLanguage) ? "ja" : "en";
 export const isJapanese = locale === "ja";
