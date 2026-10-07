@@ -6,7 +6,7 @@ use std::{
   collections::{HashMap, HashSet},
   fs,
   path::{Path, PathBuf},
-  sync::{Mutex, OnceLock},
+  sync::{Condvar, Mutex, OnceLock},
   time::SystemTime,
 };
 #[cfg(test)]
@@ -79,6 +79,24 @@ struct ModelPackage { path: String, name: String, bytes_base64: String, file_byt
 struct CachedHeicPreview { file_bytes: u64, modified: Option<SystemTime>, width: u32, height: u32, image: image::RgbaImage }
 
 static HEIC_PREVIEW_CACHE: OnceLock<Mutex<HashMap<PathBuf, CachedHeicPreview>>> = OnceLock::new();
+static PREVIEW_SLOTS: (Mutex<usize>, Condvar) = (Mutex::new(0), Condvar::new());
+struct PreviewPermit;
+impl PreviewPermit {
+  fn acquire() -> Option<Self> {
+    let mut active = PREVIEW_SLOTS.0.lock().ok()?;
+    while *active >= 2 { active = PREVIEW_SLOTS.1.wait(active).ok()?; }
+    *active += 1;
+    Some(Self)
+  }
+}
+impl Drop for PreviewPermit {
+  fn drop(&mut self) {
+    if let Ok(mut active) = PREVIEW_SLOTS.0.lock() {
+      *active = active.saturating_sub(1);
+      PREVIEW_SLOTS.1.notify_one();
+    }
+  }
+}
 
 #[tauri::command]
 async fn inspect_files(app: AppHandle, paths: Vec<String>, request_id: String, max_files: Option<usize>) -> Result<InspectResult, String> {
@@ -311,7 +329,8 @@ fn process_file(path: &Path, settings: &Settings) -> Result<(Status, Option<u64>
       } else {
         format!("{}をPNGに変換しました", input_format_name(path))
       };
-      (optimized, "png", message, true)
+      let compression_only = !changed_size && (settings.color_mode == "auto" || fell_back_to_lossless);
+      (optimized, "png", message, compression_only)
     }
   };
   if is_png(path) && skip_when_larger && optimized.len() as u64 >= original.len() as u64 {
@@ -586,6 +605,7 @@ fn load_input_image_from_bytes(path: &Path, bytes: &[u8]) -> Result<image::Dynam
 }
 
 fn make_preview(path: &Path, size: u32) -> Option<String> {
+  let _permit = PreviewPermit::acquire()?;
   if !is_supported_image(path) { return None; }
   let source = if is_heic(path) {
     cached_heic_preview(path).map(|cached| image::DynamicImage::ImageRgba8(cached.image)).or_else(|| load_input_image(path).ok())?
@@ -1057,6 +1077,54 @@ mod tests {
     assert!(jpeg_path.ends_with("sample-smart.jpg"));
     assert_eq!(&fs::read(jpeg_path).unwrap()[..2], &[0xff, 0xd8]);
     fs::remove_dir_all(root).unwrap();
+  }
+
+  #[test]
+  fn explicit_png_format_and_resize_are_saved_even_when_larger() {
+    let id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let root = std::env::temp_dir().join(format!("be-png-transform-{}-{id}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let input = root.join("tiny.png");
+    let source = image::RgbaImage::from_pixel(2, 1, image::Rgba([255, 0, 0, 255]));
+    let original = oxipng::optimize_from_memory(&encode_rgb24(&source, 2, 1).unwrap(), &lossless_options(6)).unwrap();
+    fs::write(&input, &original).unwrap();
+    let mut config = settings();
+    config.output_dir = Some(root.join("out").to_string_lossy().into());
+    config.color_mode = "rgba32".into();
+    let converted = process_file(&input, &config).unwrap();
+    assert!(matches!(converted.0, Status::Done));
+    let bytes = fs::read(converted.5.unwrap()).unwrap();
+    let reader = png::Decoder::new(std::io::Cursor::new(bytes)).read_info().unwrap();
+    assert_eq!(reader.info().color_type, png::ColorType::Rgba);
+    config.color_mode = "auto".into();
+    config.max_width = Some(1);
+    let resized = process_file(&input, &config).unwrap();
+    assert!(matches!(resized.0, Status::Done));
+    assert_eq!(image::image_dimensions(resized.5.unwrap()).unwrap(), (1, 1));
+    config.max_width = None;
+    assert!(matches!(process_file(&input, &config).unwrap().0, Status::Skipped));
+    assert_eq!(fs::read(&input).unwrap(), original);
+    fs::remove_dir_all(root).unwrap();
+  }
+
+  #[test]
+  fn preview_decode_concurrency_is_bounded() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let active = AtomicUsize::new(0);
+    let maximum = AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+      for _ in 0..8 {
+        scope.spawn(|| {
+          let _permit = PreviewPermit::acquire().unwrap();
+          let count = active.fetch_add(1, Ordering::SeqCst) + 1;
+          maximum.fetch_max(count, Ordering::SeqCst);
+          for _ in 0..100 { std::thread::yield_now(); }
+          active.fetch_sub(1, Ordering::SeqCst);
+        });
+      }
+    });
+    assert!(maximum.load(Ordering::SeqCst) <= 2);
+    assert_eq!(active.load(Ordering::SeqCst), 0);
   }
 
   #[test]

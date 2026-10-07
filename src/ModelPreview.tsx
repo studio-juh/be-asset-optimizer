@@ -30,6 +30,7 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const actionRef = useRef<THREE.AnimationAction | null>(null);
   const autoRotateRef = useRef(false);
+  const loadRequestRef = useRef(0);
   const [model, setModel] = useState<ModelPackage>();
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
@@ -42,19 +43,23 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
 
   const loadModel = async (path: string) => {
     if (!isModelPath(path)) { setNotice(t("FBXまたはGLBファイルを選択してください", "Choose an FBX or GLB file")); return; }
+    const request = ++loadRequestRef.current;
     setLoading(true);
     setNotice(t("3Dモデルとテクスチャを確認しています…", "Inspecting the 3D model and textures…"));
     try {
       const loaded = await invoke<ModelPackage>("load_model_package", { path });
+      if (request !== loadRequestRef.current) return;
       setModel(loaded);
+      setStats(emptyStats);
       setResolutions([]);
       setNotice(t("モデルを読み込みました", "Model loaded"));
     } catch (error) {
+      if (request !== loadRequestRef.current) return;
       setModel(undefined);
       setStats(emptyStats);
       setResolutions([]);
       setNotice(localizedDetail(error, "Could not load the 3D model"));
-    } finally { setLoading(false); }
+    } finally { if (request === loadRequestRef.current) setLoading(false); }
   };
 
   const chooseModel = async () => {
@@ -71,7 +76,7 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
     const onMenuOpen = () => { void chooseModel(); };
     window.addEventListener("smartpng-model-drop", onDrop);
     window.addEventListener("smartpng-preview-menu-open", onMenuOpen);
-    return () => { window.removeEventListener("smartpng-model-drop", onDrop); window.removeEventListener("smartpng-preview-menu-open", onMenuOpen); };
+    return () => { ++loadRequestRef.current; window.removeEventListener("smartpng-model-drop", onDrop); window.removeEventListener("smartpng-preview-menu-open", onMenuOpen); };
   }, []);
 
   useEffect(() => { autoRotateRef.current = autoRotate; }, [autoRotate]);
@@ -119,18 +124,27 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
     fillLight.position.set(-5, 2, -4);
     scene.add(fillLight);
 
+    let disposed = false;
+    let resolutionTimer: number | undefined;
     const manager = new THREE.LoadingManager();
     manager.addHandler(/\.tga$/i, new TGALoader(manager));
     manager.addHandler(/\.dds$/i, new DDSLoader(manager));
     const resultMap = new Map<string, TextureResolution>();
     const assetRequests = new Map<string, string>();
-    const flushResolutions = () => setResolutions(Array.from(resultMap.values()).sort((a, b) => a.request.localeCompare(b.request)));
+    const flushResolutions = () => { if (!disposed) setResolutions(Array.from(resultMap.values()).sort((a, b) => a.request.localeCompare(b.request))); };
     manager.setURLModifier((url) => {
       if (/^(data:|blob:)/i.test(url)) return url;
+      // Never let references in an imported model trigger network or arbitrary file requests.
+      if (/^(?:[a-z][a-z0-9+.-]*:)?\/\//i.test(url) || (/^[a-z][a-z0-9+.-]*:/i.test(url) && !/^[a-z]:[\\/]/i.test(url))) {
+        resultMap.set(url, { request: readableRequest(url), status: "missing" });
+        flushResolutions();
+        return "data:application/octet-stream;base64,";
+      }
       const match = findTexture(url, model?.textures ?? []);
       if (!match) {
         resultMap.set(url, { request: readableRequest(url), status: "missing" });
-        return url;
+        flushResolutions();
+        return "data:application/octet-stream;base64,";
       }
       const assetUrl = convertFileSrc(match.path);
       resultMap.set(url, { request: readableRequest(url), resolvedPath: match.path, status: "found" });
@@ -139,13 +153,13 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
     });
     manager.onLoad = flushResolutions;
     manager.onError = (url) => {
+      if (disposed) return;
       const request = assetRequests.get(url) ?? url;
       const current = resultMap.get(request);
       resultMap.set(request, { request: current?.request ?? readableRequest(request), resolvedPath: current?.resolvedPath, status: "error" });
       flushResolutions();
     };
 
-    let disposed = false;
     let root: THREE.Group | undefined;
     let resizeObserver: ResizeObserver | undefined;
     let frame = 0;
@@ -195,7 +209,7 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
         mixerRef.current = mixer;
         actionRef.current = action;
       }
-      window.setTimeout(flushResolutions, 0);
+      resolutionTimer = window.setTimeout(flushResolutions, 0);
       setNotice("");
     };
 
@@ -225,7 +239,7 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
       const bytes = decodeBase64(model.bytesBase64);
       try {
         if (model.path.toLowerCase().endsWith(".glb")) {
-          new GLTFLoader(manager).parse(bytes, "", (gltf) => showModel(gltf.scene, gltf.animations), (error) => setNotice(t(`GLBを表示できません: ${String(error)}`, `Could not display the GLB: ${localizedDetail(error, "The model could not be parsed")}`)));
+        new GLTFLoader(manager).parse(bytes, "", (gltf) => showModel(gltf.scene, gltf.animations), (error) => { if (!disposed) setNotice(t(`GLBを表示できません: ${String(error)}`, `Could not display the GLB: ${localizedDetail(error, "The model could not be parsed")}`)); });
         } else {
           const loadedRoot = new FBXLoader(manager).parse(bytes, "");
           showModel(loadedRoot, loadedRoot.animations);
@@ -235,6 +249,7 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
 
     return () => {
       disposed = true;
+      window.clearTimeout(resolutionTimer);
       cancelAnimationFrame(frame);
       resizeObserver?.disconnect();
       controls.dispose();
@@ -270,6 +285,8 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
   };
 
   const clearModel = () => {
+    ++loadRequestRef.current;
+    setLoading(false);
     setAutoRotate(false);
     autoRotateRef.current = false;
     setModel(undefined);
@@ -282,7 +299,7 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
   return <section className="model-preview">
     <div className="model-toolbar">
       <div className="model-title"><strong title={model?.path}>{model?.name ?? t("3Dプレビュー", "3D Preview")}</strong>{model && <span>{t(`${formatBytes(model.fileBytes)} ・ メッシュ ${stats.meshes} ・ 三角形 ${stats.triangles.toLocaleString()}`, `${formatBytes(model.fileBytes)} · ${stats.meshes} meshes · ${stats.triangles.toLocaleString()} triangles`)}</span>}{notice && <span role="status">{notice}</span>}</div>
-      <div className="model-actions"><button onClick={clearModel} disabled={!model || loading}>{t("クリア", "Clear")}</button><button onClick={chooseModel} disabled={loading}>{model ? t("別のモデル", "Choose Another") : t("モデルを開く", "Open Model")}</button><button disabled={!model} onClick={() => model && revealItemInDir(model.path)}>{t("保存場所", "Show Location")}</button></div>
+      <div className="model-actions"><button onClick={clearModel} disabled={!model && !loading}>{t("クリア", "Clear")}</button><button onClick={chooseModel} disabled={loading}>{model ? t("別のモデル", "Choose Another") : t("モデルを開く", "Open Model")}</button><button disabled={!model} onClick={() => model && revealItemInDir(model.path)}>{t("保存場所", "Show Location")}</button></div>
     </div>
     <div className="model-content">
       <div className="model-stage">
@@ -301,7 +318,7 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
         <h3>{t("テクスチャ参照", "Texture References")}</h3>
         {resolutions.length ? <div className="texture-resolution-list">{resolutions.map((item, index) => <div className={`texture-resolution ${item.status}`} key={`${item.request}-${index}`}>
           <span className="resolution-mark">{item.status === "found" ? "✓" : "!"}</span>
-          <div><strong title={item.request}>{fileName(item.request)}</strong><small title={item.resolvedPath ?? item.request}>{item.resolvedPath ? relativeForDisplay(item.resolvedPath, model!.path) : item.request}</small></div>
+          <div><strong title={item.request}>{fileName(item.request)}</strong><small title={item.resolvedPath ?? item.request}>{item.resolvedPath && model ? relativeForDisplay(item.resolvedPath, model.path) : item.request}</small></div>
         </div>)}</div> : <p className="model-empty-note">{t("参照なし", "No references")}</p>}
         {model?.scanLimited && <p className="model-warning">{t("画像が多いため、探索は1,500件で打ち切りました。", "The texture scan stopped after 1,500 files.")}</p>}
         <div className="model-stats"><span>{t(`マテリアル ${stats.materials}`, `Materials ${stats.materials}`)}</span><span>{t(`アニメーション ${stats.animations}`, `Animations ${stats.animations}`)}</span></div>
