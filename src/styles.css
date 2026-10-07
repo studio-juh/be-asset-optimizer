@@ -233,8 +233,11 @@ legend { margin-bottom: 8px; }
 :root { --ui-text: 11px; --ui-small: 10px; --ui-title: 13px; --ui-control-height: 26px; }
 body { font-size: var(--ui-text); line-height: 1.35; }
 h2 { font-size: var(--ui-title); }
-.workspace { grid-template-columns: 280px minmax(0, 1fr); gap: 10px; }
-.settings { padding: 12px; }
+.workspace { grid-template-columns: 300px minmax(0, 1fr); gap: 10px; }
+.settings { padding: 12px; min-width: 300px; }
+.path-row { grid-template-columns: minmax(0, 1fr) 70px; }
+.path-row input { min-width: 0; }
+.path-row button { white-space: nowrap; }
 .settings h2 { font-size: var(--ui-title); margin-bottom: 6px; }
 label { font-size: var(--ui-text); line-height: 1.35; gap: 3px; }
 input, select { font-size: var(--ui-text); line-height: 1.35; min-height: var(--ui-control-height); padding: 3px 7px; }
@@ -265,4 +268,37 @@ legend { font-size: var(--ui-text); line-height: 1.35; margin-bottom: 3px; }
 .model-drop-prompt { position: absolute; inset: 0; display: grid; place-items: center; color: #aeb9ca; font-size: var(--ui-title); pointer-events: none; }
 .tool-panel { display: contents; }
 .tool-panel[hidden] { display: none; }
+.tabs { flex-wrap: wrap; }
+.texture-tool-inputs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 12px; overflow-y: auto; }
+.texture-tool-card { min-width: 0; border: 1px solid #39445a; border-radius: 8px; padding: 12px; display: grid; gap: 8px; }
+.texture-tool-card button, .tool-results button { border: 1px solid #39445a; border-radius: 6px; background: #252c3a; color: #dbe4f3; padding: 5px 8px; }
+.texture-input { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 52px; }
+.texture-input span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.texture-input-row { display: grid; grid-template-columns: minmax(0, 1fr) 28px; align-items: center; gap: 6px; min-width: 0; }
+.texture-input-row .texture-input { width: 100%; }
+.texture-input-row .texture-remove { min-width: 28px; padding-inline: 0; }
+.texture-input span:not(.thumbnail) { min-width: 0; }
+.texture-tool-inputs.normal-adjust-inputs { flex-shrink: 0; gap: 10px; }
+.normal-adjust-inputs .texture-tool-card { padding: 8px; gap: 6px; }
+.normal-adjust-preview { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 0 12px 12px; min-height: 0; flex: 1; }
+.normal-preview-pane { min-width: 0; min-height: 0; border: 1px solid #39445a; border-radius: 8px; display: flex; flex-direction: column; align-items: center; padding: 8px; gap: 8px; }
+.normal-preview-pane strong { align-self: flex-start; font-size: var(--ui-text); }
+.normal-preview-pane img { width: 100%; flex: 1; min-height: 0; object-fit: contain; }
+.normal-preview-pane > span { margin: auto; color: #8995a9; font-size: var(--ui-text); }
+[data-theme="light"] .normal-preview-pane { border-color: #cbd4df; }
+.tool-results { padding: 12px; overflow-y: auto; }
+.tool-results > div { display: flex; gap: 8px; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.tool-results span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-results button { flex-shrink: 0; }
+.material-settings .path-row:has(.map-clear) { grid-template-columns: minmax(0, 1fr) 70px 24px; }
+.material-settings .path-row .map-clear { min-width: 24px; padding: 0; }
+.material-settings fieldset:last-child { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.material-settings fieldset:last-child > label + label { margin-top: 0; }
+.material-settings fieldset:last-child .checkbox { grid-column: 1 / -1; }
+.material-stage { flex: 1; }
+.diagnosis { overflow-y: auto; max-height: 260px; flex-shrink: 0; font-size: var(--ui-small); }
+.diagnosis p { padding: 4px 0; overflow-wrap: anywhere; }
+.model-inspector { overflow-y: auto; }
+[data-theme="light"] .texture-tool-card { border-color: #cbd4df; }
+[data-theme="light"] .texture-tool-card button, [data-theme="light"] .tool-results button { background: #f3f5f8; color: #39465a; border-color: #cbd4df; }
 [data-theme="light"] .model-drop-prompt { color: #59667a; }

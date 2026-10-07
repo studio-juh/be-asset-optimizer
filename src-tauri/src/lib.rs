@@ -1,5 +1,6 @@
 pub mod cli;
 mod atlas;
+mod texture_tools;
 use atlas::AtlasSlot;
 
 use std::{
@@ -61,7 +62,7 @@ struct NormalSettings { output_dir: Option<String>, max_long_edge: Option<u32>, 
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AtlasSettings { output_dir: Option<String>, pad_to_square: bool, square_resolution: Option<u32> }
+struct AtlasSettings { output_dir: Option<String>, pad_to_square: bool, square_resolution: Option<u32>, #[serde(default)] padding: u32 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -268,7 +269,7 @@ async fn create_texture_atlas(slots: Vec<AtlasSlot>, settings: AtlasSettings) ->
         Some(load_input_image(&path)?.to_rgba8())
       } else { None });
     }
-    let atlas = atlas::render(&slots, &images, settings.pad_to_square, settings.square_resolution)?;
+    let atlas = atlas::render_with_padding(&slots, &images, settings.pad_to_square, settings.square_resolution, settings.padding)?;
     let (width, height) = atlas.dimensions();
     let encoded = encode_rgba(&atlas, width, height)?;
     let optimized = oxipng::optimize_from_memory(&encoded, &lossless_options(1)).map_err(|error| error.to_string())?;
@@ -728,6 +729,9 @@ fn build_app_menu<R: tauri::Runtime>(app: &AppHandle<R>, japanese: bool) -> taur
     .text("tab-normal", text("ノーマルマップ", "Normal Map"))
     .text("tab-atlas", text("テクスチャアトラス", "Texture Atlas"))
     .text("tab-preview", text("3Dプレビュー", "3D Preview"))
+    .text("tab-material", text("PBRプレビュー", "PBR Preview"))
+    .text("tab-channels", text("チャンネル合成・分離", "Channel Packing / Split"))
+    .text("tab-adjust", text("ノーマル調整", "Normal Adjustment"))
     .build()?;
   let view = SubmenuBuilder::new(app, text("表示(&V)", "View (&V)"))
     .text("theme-light", text("ライトテーマ", "Light Theme"))
@@ -773,7 +777,7 @@ pub fn run() {
     .on_menu_event(|app, event| {
       let _ = app.emit("app-menu-action", event.id().as_ref());
     })
-    .invoke_handler(tauri::generate_handler![set_ui_locale, inspect_files, create_preview, load_model_package, process_batch, process_normal_batch, create_texture_atlas])
+    .invoke_handler(tauri::generate_handler![set_ui_locale, inspect_files, create_preview, load_model_package, process_batch, process_normal_batch, create_texture_atlas, texture_tools::pack_channels, texture_tools::split_channels, texture_tools::adjust_normal, texture_tools::diagnose_textures])
     .run(tauri::generate_context!())
     .expect("Be Asset Optimizer の起動に失敗しました");
 }

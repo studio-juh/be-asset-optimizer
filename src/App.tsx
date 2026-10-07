@@ -8,11 +8,13 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import NormalMap from "./NormalMap";
 import TextureAtlas from "./TextureAtlas";
 import Thumbnail from "./Thumbnail";
+import TextureTools from "./TextureTools";
 import { InspectProgress, InspectResult, supportedImageFilter, supportedImageShortLabel } from "./imageFiles";
 import { locale, localizedDetail, setLocale, t } from "./i18n";
 import { storePreview, storePreviewTab, StorePreviewTab } from "./storePreview";
 
 const ModelPreview = lazy(() => import("./ModelPreview"));
+const MaterialPreview = lazy(() => import("./MaterialPreview"));
 
 type Status = "ready" | "processing" | "done" | "skipped" | "failed";
 type ResizeMode = "lanczos3" | "nearest";
@@ -144,6 +146,10 @@ export default function App() {
       if (event.payload.type !== "drop") return;
       if (activeTab === "preview") window.dispatchEvent(new CustomEvent("smartpng-model-drop", { detail: event.payload.paths }));
       else if (activeTab === "normal") window.dispatchEvent(new CustomEvent("smartpng-normal-drop", { detail: event.payload.paths }));
+      else if (["material", "channels", "adjust"].includes(activeTab)) {
+        window.dispatchEvent(new CustomEvent(`smartpng-${activeTab}-target`, { detail: event.payload.position }));
+        window.dispatchEvent(new CustomEvent(`smartpng-${activeTab}-drop`, { detail: event.payload.paths }));
+      }
       else void addPaths(event.payload.paths);
     });
 
@@ -214,6 +220,9 @@ export default function App() {
         case "tab-normal": setActiveTab("normal"); break;
         case "tab-atlas": setActiveTab("atlas"); break;
         case "tab-preview": setActiveTab("preview"); break;
+        case "tab-material": setActiveTab("material"); break;
+        case "tab-channels": setActiveTab("channels"); break;
+        case "tab-adjust": setActiveTab("adjust"); break;
         case "theme-light": setTheme("light"); break;
         case "theme-dark": setTheme("dark"); break;
         case "scale-80": setDisplayScale(0.8); break;
@@ -270,7 +279,9 @@ export default function App() {
       <button className={activeTab === "normal" ? "active" : ""} onClick={() => setActiveTab("normal")}>{t("ノーマルマップ", "Normal Map")}</button>
       <button className={activeTab === "atlas" ? "active" : ""} onClick={() => setActiveTab("atlas")}>{t("テクスチャアトラス", "Texture Atlas")}</button>
       <button className={activeTab === "preview" ? "active" : ""} onClick={() => setActiveTab("preview")}>{t("3Dプレビュー", "3D Preview")}</button>
-      <div className="view-controls"><label className="theme-control">{t("テーマ", "Theme")} <select value={theme} onChange={(event) => setTheme(event.target.value as "light" | "dark")}><option value="light">{t("ライト（既定）", "Light (default)")}</option><option value="dark">{t("ダーク", "Dark")}</option></select></label><label className="display-scale">{t("表示", "View")} <select value={displayScale} onChange={(event) => setDisplayScale(Number(event.target.value))}><option value="0.8">80%</option><option value="0.9">90%</option><option value="1">{t("100%（既定）", "100% (default)")}</option><option value="1.1">110%</option><option value="1.25">125%</option></select></label></div>
+      <button className={activeTab === "material" ? "active" : ""} onClick={() => setActiveTab("material")}>{t("PBRプレビュー", "PBR Preview")}</button>
+      <button className={activeTab === "channels" ? "active" : ""} onClick={() => setActiveTab("channels")}>{t("チャンネル", "Channels")}</button>
+      <button className={activeTab === "adjust" ? "active" : ""} onClick={() => setActiveTab("adjust")}>{t("ノーマル調整", "Normal Adjust")}</button>
     </nav>
     <div className="tool-panel" hidden={activeTab !== "optimize"}><section className="workspace">
       <aside className="settings">
@@ -287,6 +298,9 @@ export default function App() {
     </section></div>
     <div className="tool-panel" hidden={activeTab !== "normal"}>{visitedTabs.has("normal") && <NormalMap />}</div>
     <div className="tool-panel" hidden={activeTab !== "atlas"}>{visitedTabs.has("atlas") && <TextureAtlas />}</div>
+    <div className="tool-panel" hidden={activeTab !== "channels"}>{visitedTabs.has("channels") && <TextureTools mode="channels" />}</div>
+    <div className="tool-panel" hidden={activeTab !== "adjust"}>{visitedTabs.has("adjust") && <TextureTools mode="adjust" />}</div>
+    <div className="tool-panel" hidden={activeTab !== "material"}>{visitedTabs.has("material") && <Suspense fallback={<section className="queue" />}><MaterialPreview active={activeTab === "material"} /></Suspense>}</div>
     <div className="tool-panel" hidden={activeTab !== "preview"}>{visitedTabs.has("preview") && <Suspense fallback={<section className="model-preview-empty"><div className="drop-zone"><strong>{t("3D表示を準備中…", "Preparing 3D preview…")}</strong></div></section>}><ModelPreview active={activeTab === "preview"} /></Suspense>}</div>
   </main>;
 }

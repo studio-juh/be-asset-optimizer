@@ -53,6 +53,7 @@ export default function TextureAtlas() {
   const [square, setSquare] = useState(true);
   const [resolution, setResolution] = useState("");
   const [custom, setCustom] = useState("");
+  const [padding, setPadding] = useState(2);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const requestRef = useRef("");
@@ -62,7 +63,7 @@ export default function TextureAtlas() {
   const [notice, setNotice] = useState(t("画像を任意の枠へドロップしてください。空き枠は黒で埋めます。", "Drop images into any slot. Empty slots will be black."));
   const count = slots.filter(slot => slot.texture).length;
   const selectedResolution = resolution === "custom" ? (custom.trim() ? Number(custom) : NaN) : resolution ? Number(resolution) : null;
-  const warnings = resolutionWarnings(slots, square, selectedResolution);
+  const warnings = resolutionWarnings(slots, square, selectedResolution, padding);
   const commit = (next: AtlasSlot[]) => { slotsRef.current = next; setSlots(next); setResult(undefined); };
   const lock = (value: boolean) => { busyRef.current = value; if (alive.current) setBusy(value); };
   const addPaths = async (paths: string[], id?: string) => {
@@ -117,7 +118,7 @@ export default function TextureAtlas() {
     }
     lock(true); setResult(undefined); setNotice(t("アトラスを作成しています…", "Creating atlas…"));
     try {
-      const created = await invoke<AtlasResult>("create_texture_atlas", { slots: slotsRef.current.map(slot => ({ x: slot.x, y: slot.y, size: slot.size, path: slot.texture?.path ?? null })), settings: { outputDir: outputDir || null, padToSquare: square, squareResolution: square ? numeric : null } });
+      const created = await invoke<AtlasResult>("create_texture_atlas", { slots: slotsRef.current.map(slot => ({ x: slot.x, y: slot.y, size: slot.size, path: slot.texture?.path ?? null })), settings: { outputDir: outputDir || null, padToSquare: square, squareResolution: square ? numeric : null, padding } });
       if (alive.current) { setResult(created); setNotice(t("テクスチャアトラスを作成しました", "Texture atlas created")); }
     } catch (error) { if (alive.current) setNotice(localizedDetail(error, "Could not create atlas. Try a smaller slot resolution.")); }
     finally { lock(false); }
@@ -126,6 +127,7 @@ export default function TextureAtlas() {
     <aside className="settings atlas-settings"><h2>{t("アトラス設定", "Atlas Settings")}</h2>
       <label>{t("出力先", "Output folder")}<div className="path-row"><input disabled={busy} value={outputDir} onChange={event => setOutputDir(event.target.value)} placeholder={t("最初の画像のフォルダー / atlas", "First image folder / atlas")} /><button disabled={busy} onClick={async () => { const dir = await open({ directory: true, multiple: false }); if (typeof dir === "string") setOutputDir(dir); }}>{t("選択", "Choose")}</button></div></label>
       <fieldset disabled={busy}><legend>{t("配置", "Layout")}</legend>
+        <label>{t("端の色を延長する余白", "Edge Extrusion Padding")}<select value={padding} onChange={event => { setPadding(Number(event.target.value)); setResult(undefined); }}>{[0,1,2,4,8,16,32,64].map(value=><option key={value} value={value}>{value} px</option>)}</select></label>
         <div className="actions atlas-layout-actions"><button type="button" onClick={() => { let next = slotsRef.current; for (const slot of [...next]) if (slot.size === 2) next = splitSlot(next, slot.id); commit(next); }}>{t("全枠を4分割（4×4）", "Split all slots (4×4)")}</button></div>
         <label className="checkbox"><input type="checkbox" checked={square} onChange={event => { setSquare(event.target.checked); setResult(undefined); }} />{t("各画像を正方形として補完", "Pad images to square cells")}</label>
         {square && <label>{t("1大枠の解像度", "Resolution per large slot")}<select value={resolution} onChange={event => { setResolution(event.target.value); setResult(undefined); }}><option value="">{t("自動", "Automatic")}</option>{[256,512,1024,2048,4096].map(size => <option key={size} value={size}>{size} × {size}</option>)}<option value="custom">Custom…</option></select>{resolution === "custom" && <input inputMode="numeric" value={custom} onChange={event => { setCustom(event.target.value); setResult(undefined); }} placeholder="16–4096 px" />}</label>}

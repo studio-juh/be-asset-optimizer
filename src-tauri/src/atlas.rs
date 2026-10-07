@@ -29,8 +29,13 @@ pub(crate) fn validate(slots: &[AtlasSlot]) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn render(slots: &[AtlasSlot], images: &[Option<image::RgbaImage>], square: bool, resolution: Option<u32>) -> Result<image::RgbaImage, String> {
+    render_with_padding(slots, images, square, resolution, 0)
+}
+pub(crate) fn render_with_padding(slots: &[AtlasSlot], images: &[Option<image::RgbaImage>], square: bool, resolution: Option<u32>, padding: u32) -> Result<image::RgbaImage, String> {
     validate(slots)?;
+    if padding > 64 { return Err("余白は0〜64 pxで指定してください".into()); }
     if slots.len() != images.len() || images.iter().all(Option::is_none) { return Err("画像を1枚以上指定してください".into()); }
     if resolution.is_some_and(|v| !(16..=4096).contains(&v)) { return Err("1枠の解像度は16〜4096 pxで指定してください".into()); }
     let mut cell_width = 1u64;
@@ -38,8 +43,8 @@ pub(crate) fn render(slots: &[AtlasSlot], images: &[Option<image::RgbaImage>], s
     for (slot, image) in slots.iter().zip(images) {
         if let Some(image) = image {
             if image.width() == 0 || image.height() == 0 { return Err("空の画像は使用できません".into()); }
-            cell_width = cell_width.max(image.width() as u64 * 2 / slot.size as u64);
-            cell_height = cell_height.max(image.height() as u64 * 2 / slot.size as u64);
+            cell_width = cell_width.max((image.width() as u64 + padding as u64 * 2) * 2 / slot.size as u64);
+            cell_height = cell_height.max((image.height() as u64 + padding as u64 * 2) * 2 / slot.size as u64);
         }
     }
     if square { cell_width = resolution.map(u64::from).unwrap_or(cell_width.max(cell_height)); cell_height = cell_width; }
@@ -56,8 +61,17 @@ pub(crate) fn render(slots: &[AtlasSlot], images: &[Option<image::RgbaImage>], s
         if w == 0 || h == 0 { return Err("分割枠の解像度が小さすぎます".into()); }
         // Keep existing transparent padding for occupied cells; empty cells are opaque black.
         for row in y..y + h { for col in x..x + w { atlas.put_pixel(col, row, image::Rgba([0, 0, 0, 0])); } }
-        let fitted = super::fit_image_to_cell(image, w, h);
-        image::imageops::replace(&mut atlas, &fitted, (x + (w - fitted.width()) / 2) as i64, (y + (h - fitted.height()) / 2) as i64);
+        if w <= padding * 2 || h <= padding * 2 { return Err("枠に対して余白が大きすぎます".into()); }
+        let fitted = super::fit_image_to_cell(image, w - padding * 2, h - padding * 2);
+        let left = x + (w - fitted.width()) / 2;
+        let top = y + (h - fitted.height()) / 2;
+        for row in top-padding..top+fitted.height()+padding {
+            for col in left-padding..left+fitted.width()+padding {
+                let sx = col.saturating_sub(left).min(fitted.width()-1);
+                let sy = row.saturating_sub(top).min(fitted.height()-1);
+                atlas.put_pixel(col,row,*fitted.get_pixel(sx,sy));
+            }
+        }
     }
     Ok(atlas)
 }
@@ -67,6 +81,15 @@ mod tests {
     use super::*;
     fn base() -> Vec<AtlasSlot> { (0..4).map(|i| AtlasSlot { path: None, x: (i % 2) * 2, y: (i / 2) * 2, size: 2 }).collect() }
     fn pixel(color: u8) -> Option<image::RgbaImage> { Some(image::RgbaImage::from_pixel(2, 2, image::Rgba([color, 0, 0, 255]))) }
+    #[test]
+    fn padding_extrudes_edges_without_crossing_slots() {
+        let images = vec![pixel(10),pixel(20),None,None];
+        let result = render_with_padding(&base(),&images,true,Some(16),2).unwrap();
+        assert_eq!(result.get_pixel(5,5).0,[10,0,0,255]);
+        assert_eq!(result.get_pixel(21,5).0,[20,0,0,255]);
+        assert_eq!(result.get_pixel(0,20).0,[0,0,0,255]);
+        assert!(render_with_padding(&base(),&images,true,Some(16),8).is_err());
+    }
     #[test]
     fn two_and_three_images_keep_empty_positions_black() {
         for images in [vec![pixel(10), None, pixel(30), None], vec![pixel(10), pixel(20), None, pixel(40)]] {

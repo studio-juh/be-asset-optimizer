@@ -3,18 +3,18 @@ export type AtlasSlot = { id: string; x: number; y: number; size: number; textur
 export type ResolutionWarning = { width: number; height: number; scale: number };
 
 // Match atlas.rs, including auto sizing and integer boundaries of subdivided slots.
-export function resolutionWarnings(slots: AtlasSlot[], square: boolean, resolution: number | null) {
+export function resolutionWarnings(slots: AtlasSlot[], square: boolean, resolution: number | null, padding = 0) {
   const warnings = new Map<string, ResolutionWarning>();
   if (square && resolution !== null && (!Number.isInteger(resolution) || resolution < 16 || resolution > 4096)) return warnings;
   let cellWidth = 1, cellHeight = 1;
   for (const slot of slots) if (slot.texture) {
-    cellWidth = Math.max(cellWidth, slot.texture.width * 2 / slot.size);
-    cellHeight = Math.max(cellHeight, slot.texture.height * 2 / slot.size);
+    cellWidth = Math.max(cellWidth, (slot.texture.width + padding * 2) * 2 / slot.size);
+    cellHeight = Math.max(cellHeight, (slot.texture.height + padding * 2) * 2 / slot.size);
   }
   if (square) cellWidth = cellHeight = resolution ?? Math.max(cellWidth, cellHeight);
   for (const slot of slots) if (slot.texture && slot.texture.width > 0 && slot.texture.height > 0) {
-    const width = Math.floor((slot.x + slot.size) * cellWidth / 2) - Math.floor(slot.x * cellWidth / 2);
-    const height = Math.floor((slot.y + slot.size) * cellHeight / 2) - Math.floor(slot.y * cellHeight / 2);
+    const width = Math.floor((slot.x + slot.size) * cellWidth / 2) - Math.floor(slot.x * cellWidth / 2) - padding * 2;
+    const height = Math.floor((slot.y + slot.size) * cellHeight / 2) - Math.floor(slot.y * cellHeight / 2) - padding * 2;
     // Aspect-ratio padding alone is not low resolution: warn only if fitting needs upscaling.
     const scale = Math.min(width / slot.texture.width, height / slot.texture.height);
     if (scale > 1) warnings.set(slot.id, { width, height, scale });

@@ -1,0 +1,24 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import vm from "node:vm";
+import ts from "typescript";
+
+const source = readFileSync(new URL("../src/normalAdjustment.ts", import.meta.url), "utf8");
+const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
+const context = { exports: {} };
+vm.runInNewContext(compiled, context);
+const { adjustNormalPixels } = context.exports;
+const pixel = new Uint8ClampedArray([200,180,240,128]);
+const original = Array.from(pixel);
+assert.deepEqual(Array.from(adjustNormalPixels(pixel,null,0,1,false)),[128,128,255,255]);
+const a = adjustNormalPixels(pixel,null,1,1,false);
+const b = adjustNormalPixels(pixel,null,1,1,true);
+assert.equal(a[0],b[0]); assert.equal(a[1]+b[1],255); assert.equal(a[2],b[2]);
+assert.equal(a[3],255);
+assert.deepEqual(Array.from(pixel),original,"input must not be mutated");
+assert.deepEqual(Array.from(adjustNormalPixels(pixel,pixel,0,0,true)),[128,128,255,255]);
+const combined = adjustNormalPixels(pixel,pixel,1,1,false);
+const vector = Array.from(combined).slice(0,3).map(v=>v/255*2-1);
+assert.ok(Math.abs(Math.hypot(...vector)-1)<0.01,"RNM output must be normalized");
+assert.ok(combined[0]>a[0] && combined[1]>a[1],"detail normal adds surface slope");
+console.log("Normal preview tests passed: strength, green flip, RNM blend, normalization and immutable input.");
