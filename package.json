@@ -2,11 +2,10 @@
   "name": "be-asset-optimizer",
   "description": "Blender-oriented texture and 3D asset optimizer",
   "private": true,
-  "version": "0.6.1",
+  "version": "0.6.7",
   "type": "module",
   "scripts": {
     "build:cli": "cargo build --manifest-path src-tauri/Cargo.toml --release --bin be-asset-optimizer-cli",
-    "prepare:ai": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-ai-models.ps1",
     "package:store": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-store-msix.ps1",
     "dev": "vite",
     "build": "tsc -b && vite build",

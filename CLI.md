@@ -3,7 +3,7 @@
 `be-asset-optimizer-cli.exe` はGUIと同じ変換処理を使用します。
 ウィンドウを開かず、CMD / PowerShell / BlenderのPythonなどから呼び出せます。
 現在の対象は画像最適化（`optimize`）とノーマルマップ生成（`normal`）です。
-AI復元・アトラス・HTTP APIは対象外です。
+アトラス・HTTP APIは対象外です。
 
 ## ビルド
 

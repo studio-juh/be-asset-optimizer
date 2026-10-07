@@ -1,0 +1,47 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import vm from "node:vm";
+import ts from "typescript";
+
+const source = readFileSync(new URL("../src/atlasLayout.ts", import.meta.url), "utf8");
+const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
+const context = { exports: {} };
+vm.runInNewContext(compiled, context);
+const { emptyAtlas, splitSlot, addTextures, resolutionWarnings } = context.exports;
+const files = Array.from({ length: 17 }, (_, i) => ({ path: `image-${i}.png`, name: String(i), width: 8, height: 8, originalBytes: 100 }));
+for (const count of [1, 2, 3, 4, 7, 10, 13, 16, 17]) {
+  const initial = emptyAtlas();
+  const result = addTextures(initial, files.slice(0, count));
+  assert.equal(result.added, Math.min(count, 16));
+  assert.equal(initial.filter(s => s.texture).length, 0, "must not mutate previous state");
+  assert.equal(new Set(result.slots.filter(s => s.texture).map(s => s.texture.path)).size, Math.min(count, 16));
+  const coverage = Array(16).fill(0);
+  for (const slot of result.slots) for (let y = slot.y; y < slot.y + slot.size; y++) for (let x = slot.x; x < slot.x + slot.size; x++) coverage[y * 4 + x]++;
+  assert.ok(coverage.every(v => v === 1), "layout must cover every pixel without overlaps");
+}
+const targeted = addTextures(emptyAtlas(), [files[0]], "3").slots;
+assert.equal(targeted[3].texture.path, files[0].path);
+assert.equal(targeted[0].texture, undefined);
+const split = splitSlot(targeted, "3");
+assert.equal(split.length, 7);
+assert.equal(split.find(s => s.id === "3.0").texture.path, files[0].path);
+assert.equal(splitSlot(split, "3.0").length, 7, "small cells cannot be split again");
+assert.equal(addTextures(emptyAtlas(), [files[0], files[0]]).added, 2, "same image can occupy different slots");
+console.log("Atlas layout tests passed: counts, capacity, coverage, target insertion, splitting and preservation.");
+const texture = (width, height) => ({ ...files[0], width, height });
+const sized = addTextures(emptyAtlas(), [texture(2048, 2048), texture(1024, 1024), texture(4096, 512)]).slots;
+const fixed = resolutionWarnings(sized, true, 2048);
+assert.equal(fixed.size, 1);
+assert.equal(fixed.get("1").scale, 2);
+assert.equal(fixed.has("2"), false, "aspect-ratio padding does not require upscaling");
+assert.equal(resolutionWarnings(sized, true, null).get("1").scale, 4, "auto uses largest dimension");
+assert.equal(resolutionWarnings(sized, false, null).get("1").scale, 2, "rectangular cells use independent axes");
+assert.equal(resolutionWarnings(splitSlot(sized, "1"), true, 2048).has("1.0"), false, "split slot now fits 1024px source");
+assert.equal(resolutionWarnings(sized, true, NaN).size, 0);
+assert.equal(resolutionWarnings(sized, true, 8).size, 0);
+assert.equal(resolutionWarnings(emptyAtlas(), true, 2048).size, 0);
+const odd = splitSlot(addTextures(emptyAtlas(), [texture(8,8)], "3").slots, "3");
+assert.equal(resolutionWarnings(odd, true, 17).has("3.0"), false);
+odd.find(s => s.id === "3.3").texture = texture(8,8);
+assert.equal(resolutionWarnings(odd, true, 17).get("3.3").width, 9);
+console.log("Resolution warning tests passed: preset, auto, rectangular, subdivision, empty/invalid input and odd boundaries.");

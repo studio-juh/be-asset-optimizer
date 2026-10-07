@@ -1,26 +1,25 @@
-mod ai_components;
 pub mod cli;
+mod atlas;
+use atlas::AtlasSlot;
 
 use std::{
   collections::{HashMap, HashSet},
   fs,
   path::{Path, PathBuf},
-  process::{Command, Stdio},
   sync::{Mutex, OnceLock},
-  time::{SystemTime, UNIX_EPOCH},
+  time::SystemTime,
 };
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
+#[cfg(test)]
+use std::time::UNIX_EPOCH;
 use bytemuck::cast_slice;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use image::{imageops::FilterType, GenericImageView, ImageDecoder, ImageEncoder};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use tauri::{
-  menu::{AboutMetadataBuilder, MenuBuilder, MenuItemBuilder, SubmenuBuilder},
+  menu::{AboutMetadataBuilder, CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, SubmenuBuilder},
   AppHandle, Emitter, Manager,
 };
-use ai_components::{resolve_realesrgan_runtime, RealEsrganRuntime};
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -62,10 +61,6 @@ struct NormalSettings { output_dir: Option<String>, max_long_edge: Option<u32>, 
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AiRestoreSettings { output_dir: Option<String>, output_scale: u32, tile_size: Option<u32>, seamless_tiles: bool, model: String, restoration_strength: u8 }
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct AtlasSettings { output_dir: Option<String>, pad_to_square: bool, square_resolution: Option<u32> }
 
 #[derive(Debug, Serialize)]
@@ -82,20 +77,6 @@ struct ModelPackage { path: String, name: String, bytes_base64: String, file_byt
 
 #[derive(Clone)]
 struct CachedHeicPreview { file_bytes: u64, modified: Option<SystemTime>, width: u32, height: u32, image: image::RgbaImage }
-
-#[derive(Clone)]
-struct AiTileSpec {
-  core_x: u32,
-  core_y: u32,
-  core_width: u32,
-  core_height: u32,
-  input_x: u32,
-  input_y: u32,
-  input_width: u32,
-  input_height: u32,
-  input_path: PathBuf,
-  output_path: PathBuf,
-}
 
 static HEIC_PREVIEW_CACHE: OnceLock<Mutex<HashMap<PathBuf, CachedHeicPreview>>> = OnceLock::new();
 
@@ -258,44 +239,22 @@ async fn process_normal_batch(app: AppHandle, paths: Vec<String>, settings: Norm
 }
 
 #[tauri::command]
-async fn process_ai_restore_batch(app: AppHandle, paths: Vec<String>, settings: AiRestoreSettings) -> Result<(), String> {
+async fn create_texture_atlas(slots: Vec<AtlasSlot>, settings: AtlasSettings) -> Result<AtlasResult, String> {
   tauri::async_runtime::spawn_blocking(move || {
-    let runtime = match resolve_realesrgan_runtime(&app) {
-      Ok(runtime) => runtime,
-      Err(error) => {
-        for path in paths {
-          emit_ai_restore(&app, &path, Status::Failed, None, None, None, Some(error.clone()), None);
-        }
-        return;
-      }
-    };
-    for path in paths {
-      let path_buf = PathBuf::from(&path);
-      emit_ai_restore(&app, &path, Status::Processing, None, None, None, Some("AIで復元中".into()), None);
-      match process_ai_restore_file(&path_buf, &settings, &runtime) {
-        Ok(result) => emit_ai_restore(&app, &path, result.0, result.1, Some(result.2), Some(result.3), result.4, result.5),
-        Err(error) => emit_ai_restore(&app, &path, Status::Failed, None, None, None, Some(error), None),
-      }
+    atlas::validate(&slots)?;
+    let mut images = Vec::with_capacity(slots.len());
+    for slot in &slots {
+      images.push(if let Some(path) = &slot.path {
+        let path = PathBuf::from(path);
+        if !is_supported_image(&path) { return Err("対応している画像ファイルを指定してください".into()); }
+        Some(load_input_image(&path)?.to_rgba8())
+      } else { None });
     }
-  }).await.map_err(|error| error.to_string())?;
-  Ok(())
-}
-
-#[tauri::command]
-async fn create_texture_atlas(paths: Vec<String>, settings: AtlasSettings) -> Result<AtlasResult, String> {
-  tauri::async_runtime::spawn_blocking(move || {
-    if paths.len() != 4 { return Err("テクスチャアトラスには画像を4枚指定してください".into()); }
-    let mut images = Vec::with_capacity(4);
-    for path in &paths {
-      let path = PathBuf::from(path);
-      if !is_supported_image(&path) { return Err("対応している画像ファイルを4枚指定してください".into()); }
-      images.push(load_input_image(&path)?.to_rgba8());
-    }
-    let atlas = build_texture_atlas(&images, settings.pad_to_square, settings.square_resolution)?;
+    let atlas = atlas::render(&slots, &images, settings.pad_to_square, settings.square_resolution)?;
     let (width, height) = atlas.dimensions();
     let encoded = encode_rgba(&atlas, width, height)?;
     let optimized = oxipng::optimize_from_memory(&encoded, &lossless_options(1)).map_err(|error| error.to_string())?;
-    let first_path = PathBuf::from(&paths[0]);
+    let first_path = PathBuf::from(slots.iter().find_map(|slot| slot.path.as_ref()).ok_or("画像を1枚以上指定してください")?);
     let output_dir = if let Some(dir) = settings.output_dir.as_deref().filter(|value| !value.trim().is_empty()) { PathBuf::from(dir) } else { first_path.parent().ok_or("入力元フォルダを取得できません")?.join("atlas") };
     fs::create_dir_all(&output_dir).map_err(|error| error.to_string())?;
     let output_path = unique_named_output_path(&output_dir, "texture", "atlas");
@@ -310,322 +269,6 @@ fn emit(app: &AppHandle, path: &str, status: Status, output_bytes: Option<u64>, 
 
 fn emit_normal(app: &AppHandle, path: &str, status: Status, output_bytes: Option<u64>, output_width: Option<u32>, output_height: Option<u32>, message: Option<String>, output_path: Option<String>) {
   let _ = app.emit("normal-job-progress", Progress { path: path.into(), status, output_bytes, output_width, output_height, message, output_path });
-}
-
-fn emit_ai_restore(app: &AppHandle, path: &str, status: Status, output_bytes: Option<u64>, output_width: Option<u32>, output_height: Option<u32>, message: Option<String>, output_path: Option<String>) {
-  let _ = app.emit("ai-restore-job-progress", Progress { path: path.into(), status, output_bytes, output_width, output_height, message, output_path });
-}
-
-fn run_realesrgan(runtime: &RealEsrganRuntime, input: &Path, output: &Path, tile_size: u32, model_name: &str) -> Result<(), String> {
-  let mut command = Command::new(&runtime.executable);
-  command
-    .current_dir(&runtime.working_dir)
-    .arg("-i").arg(input)
-    .arg("-o").arg(output)
-    .arg("-s").arg("4")
-    .arg("-t").arg(tile_size.to_string())
-    .arg("-m").arg("models")
-    .arg("-n").arg(model_name)
-    .arg("-f").arg("png");
-  command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-  #[cfg(windows)]
-  command.creation_flags(0x0800_0000);
-
-  match command.output().map_err(|error| format!("AI復元エンジンを起動できません: {error}"))? {
-    output if output.status.success() => Ok(()),
-    output => {
-      let details = String::from_utf8_lossy(&output.stderr);
-      if details.contains("vkCreate") || details.contains("gpu") || details.contains("GPU") {
-        Err("AI復元を実行できません。GPUドライバーがVulkanに対応しているか確認してください".into())
-      } else {
-        let details = details.lines().rev().find(|line| !line.trim().is_empty()).unwrap_or("不明なエラー");
-        Err(format!("AI復元に失敗しました: {details}"))
-      }
-    }
-  }
-}
-
-fn build_ai_tiles(source_width: u32, source_height: u32, core_size: u32, overlap: u32, input_dir: &Path, output_dir: &Path) -> Vec<Vec<AiTileSpec>> {
-  let columns = source_width.div_ceil(core_size) as usize;
-  let rows = source_height.div_ceil(core_size) as usize;
-  (0..rows).map(|row| {
-    (0..columns).map(|column| {
-      let core_x = column as u32 * core_size;
-      let core_y = row as u32 * core_size;
-      let core_width = core_size.min(source_width - core_x);
-      let core_height = core_size.min(source_height - core_y);
-      let input_x = core_x.saturating_sub(overlap);
-      let input_y = core_y.saturating_sub(overlap);
-      let input_right = source_width.min(core_x + core_width + overlap);
-      let input_bottom = source_height.min(core_y + core_height + overlap);
-      let name = format!("tile-{row:04}-{column:04}.png");
-      AiTileSpec {
-        core_x,
-        core_y,
-        core_width,
-        core_height,
-        input_x,
-        input_y,
-        input_width: input_right - input_x,
-        input_height: input_bottom - input_y,
-        input_path: input_dir.join(&name),
-        output_path: output_dir.join(name),
-      }
-    }).collect()
-  }).collect()
-}
-
-fn ai_tile_pixel(tile: &AiTileSpec, image: &image::RgbaImage, global_x: u32, global_y: u32) -> image::Rgba<u8> {
-  let local_x = global_x - tile.input_x * 4;
-  let local_y = global_y - tile.input_y * 4;
-  *image.get_pixel(local_x, local_y)
-}
-
-fn blend_rgba(first: image::Rgba<u8>, second: image::Rgba<u8>, amount: f32) -> image::Rgba<u8> {
-  let amount = amount.clamp(0.0, 1.0);
-  let inverse = 1.0 - amount;
-  image::Rgba(std::array::from_fn(|index| (first[index] as f32 * inverse + second[index] as f32 * amount).round() as u8))
-}
-
-fn fade_amount(position: u32, start: u32, end: u32) -> f32 {
-  if end <= start + 1 { 0.5 } else { (position - start) as f32 / (end - start - 1) as f32 }
-}
-
-fn stitch_ai_tiles(tiles: &[Vec<AiTileSpec>], source_width: u32, source_height: u32, overlap: u32, output_path: &Path, scaled_alpha: Option<&image::GrayImage>) -> Result<(), String> {
-  let output_width = source_width.checked_mul(4).ok_or("AI復元結果の幅が大きすぎます")?;
-  let output_height = source_height.checked_mul(4).ok_or("AI復元結果の高さが大きすぎます")?;
-  let mut canvas = image::RgbaImage::new(output_width, output_height);
-
-  // First copy each non-overlapping core. Seam bands are replaced below.
-  for row in tiles {
-    for tile in row {
-      let processed = image::open(&tile.output_path)
-        .map_err(|error| format!("AI復元タイルを読み込めません ({}): {error}", tile.output_path.display()))?
-        .to_rgba8();
-      let core_start_x = tile.core_x * 4;
-      let core_start_y = tile.core_y * 4;
-      let core_end_x = (tile.core_x + tile.core_width) * 4;
-      let core_end_y = (tile.core_y + tile.core_height) * 4;
-      for y in core_start_y..core_end_y {
-        for x in core_start_x..core_end_x {
-          canvas.put_pixel(x, y, ai_tile_pixel(tile, &processed, x, y));
-        }
-      }
-    }
-  }
-
-  let overlap_scaled = overlap * 4;
-
-  // Blend the two independent predictions across every vertical boundary.
-  for row in tiles {
-    for column in 1..row.len() {
-      let left = &row[column - 1];
-      let right = &row[column];
-      let boundary = right.core_x * 4;
-      let start = boundary.saturating_sub(overlap_scaled);
-      let end = output_width.min(boundary + overlap_scaled);
-      let y_start = right.core_y * 4;
-      let y_end = (right.core_y + right.core_height) * 4;
-      let left_image = image::open(&left.output_path).map_err(|error| format!("AI復元タイルを読み込めません: {error}"))?.to_rgba8();
-      let right_image = image::open(&right.output_path).map_err(|error| format!("AI復元タイルを読み込めません: {error}"))?.to_rgba8();
-      for y in y_start..y_end {
-        for x in start..end {
-          let amount = fade_amount(x, start, end);
-          canvas.put_pixel(x, y, blend_rgba(ai_tile_pixel(left, &left_image, x, y), ai_tile_pixel(right, &right_image, x, y), amount));
-        }
-      }
-    }
-  }
-
-  // Blend across horizontal boundaries. Four-way intersections are corrected next.
-  for row_index in 1..tiles.len() {
-    for column in 0..tiles[row_index].len() {
-      let top = &tiles[row_index - 1][column];
-      let bottom = &tiles[row_index][column];
-      let boundary = bottom.core_y * 4;
-      let start = boundary.saturating_sub(overlap_scaled);
-      let end = output_height.min(boundary + overlap_scaled);
-      let x_start = bottom.core_x * 4;
-      let x_end = (bottom.core_x + bottom.core_width) * 4;
-      let top_image = image::open(&top.output_path).map_err(|error| format!("AI復元タイルを読み込めません: {error}"))?.to_rgba8();
-      let bottom_image = image::open(&bottom.output_path).map_err(|error| format!("AI復元タイルを読み込めません: {error}"))?.to_rgba8();
-      for y in start..end {
-        let amount = fade_amount(y, start, end);
-        for x in x_start..x_end {
-          canvas.put_pixel(x, y, blend_rgba(ai_tile_pixel(top, &top_image, x, y), ai_tile_pixel(bottom, &bottom_image, x, y), amount));
-        }
-      }
-    }
-  }
-
-  // At tile intersections use a true bilinear blend of all four predictions.
-  for row in 1..tiles.len() {
-    for column in 1..tiles[row].len() {
-      let top_left = &tiles[row - 1][column - 1];
-      let top_right = &tiles[row - 1][column];
-      let bottom_left = &tiles[row][column - 1];
-      let bottom_right = &tiles[row][column];
-      let boundary_x = bottom_right.core_x * 4;
-      let boundary_y = bottom_right.core_y * 4;
-      let start_x = boundary_x.saturating_sub(overlap_scaled);
-      let end_x = output_width.min(boundary_x + overlap_scaled);
-      let start_y = boundary_y.saturating_sub(overlap_scaled);
-      let end_y = output_height.min(boundary_y + overlap_scaled);
-      let top_left_image = image::open(&top_left.output_path).map_err(|error| format!("AI復元タイルを読み込めません: {error}"))?.to_rgba8();
-      let top_right_image = image::open(&top_right.output_path).map_err(|error| format!("AI復元タイルを読み込めません: {error}"))?.to_rgba8();
-      let bottom_left_image = image::open(&bottom_left.output_path).map_err(|error| format!("AI復元タイルを読み込めません: {error}"))?.to_rgba8();
-      let bottom_right_image = image::open(&bottom_right.output_path).map_err(|error| format!("AI復元タイルを読み込めません: {error}"))?.to_rgba8();
-      for y in start_y..end_y {
-        let amount_y = fade_amount(y, start_y, end_y);
-        for x in start_x..end_x {
-          let amount_x = fade_amount(x, start_x, end_x);
-          let top = blend_rgba(ai_tile_pixel(top_left, &top_left_image, x, y), ai_tile_pixel(top_right, &top_right_image, x, y), amount_x);
-          let bottom = blend_rgba(ai_tile_pixel(bottom_left, &bottom_left_image, x, y), ai_tile_pixel(bottom_right, &bottom_right_image, x, y), amount_x);
-          canvas.put_pixel(x, y, blend_rgba(top, bottom, amount_y));
-        }
-      }
-    }
-  }
-
-  if let Some(alpha) = scaled_alpha {
-    for (x, y, pixel) in canvas.enumerate_pixels_mut() {
-      pixel[3] = alpha.get_pixel(x, y)[0];
-    }
-  }
-  let encoded = if scaled_alpha.is_some() { encode_rgba(&canvas, output_width, output_height)? } else { encode_rgb24(&canvas, output_width, output_height)? };
-  fs::write(output_path, encoded).map_err(|error| format!("AI復元結果を合成できません: {error}"))
-}
-
-fn process_ai_restore_seamless(input_path: &Path, output_path: &Path, temporary_dir: &Path, source_width: u32, source_height: u32, core_size: u32, runtime: &RealEsrganRuntime, model_name: &str) -> Result<(), String> {
-  let input_dir = temporary_dir.join("tiles-input");
-  let output_dir = temporary_dir.join("tiles-output");
-  fs::create_dir_all(&input_dir).map_err(|error| format!("AI復元タイル用フォルダーを作成できません: {error}"))?;
-  fs::create_dir_all(&output_dir).map_err(|error| format!("AI復元タイル用フォルダーを作成できません: {error}"))?;
-  // 24 px on each side gives a 48 px shared blend band. Larger 608 px
-  // padded tiles can silently turn black on some Vulkan drivers/GPUs.
-  let overlap = 24.min(core_size / 4);
-  let source = image::open(input_path).map_err(|error| format!("AI復元用画像を読み込めません: {error}"))?;
-  let has_alpha = source.color().has_alpha();
-  let source = source.to_rgba8();
-  let scaled_width = source_width.checked_mul(4).ok_or("AI復元結果の幅が大きすぎます")?;
-  let scaled_height = source_height.checked_mul(4).ok_or("AI復元結果の高さが大きすぎます")?;
-  let scaled_alpha = has_alpha.then(|| {
-    let alpha = image::GrayImage::from_fn(source_width, source_height, |x, y| image::Luma([source.get_pixel(x, y)[3]]));
-    image::imageops::resize(&alpha, scaled_width, scaled_height, FilterType::Lanczos3)
-  });
-  let tiles = build_ai_tiles(source_width, source_height, core_size, overlap, &input_dir, &output_dir);
-  for row in &tiles {
-    for tile in row {
-      let cropped = image::imageops::crop_imm(&source, tile.input_x, tile.input_y, tile.input_width, tile.input_height).to_image();
-      // The bundled NCNN runner can lose alpha after the first image in a
-      // directory batch. Infer RGB only, then restore the original alpha mask.
-      let encoded = encode_rgb_channels(&cropped, tile.input_width, tile.input_height)?;
-      fs::write(&tile.input_path, encoded).map_err(|error| format!("AI復元タイルを準備できません: {error}"))?;
-    }
-  }
-  // This bundled runner produces invalid images for some directory batches,
-  // especially when alpha is involved. Process each padded tile explicitly.
-  for row in &tiles {
-    for tile in row {
-      // Keep the engine's own tile size slightly larger than the padded input.
-      // An exact square match can yield an empty/black tile in this NCNN build.
-      run_realesrgan(runtime, &tile.input_path, &tile.output_path, core_size + overlap * 2 + 32, model_name)?;
-    }
-  }
-  stitch_ai_tiles(&tiles, source_width, source_height, overlap, output_path, scaled_alpha.as_ref())
-}
-
-fn blend_ai_restore_with_reference(restored: &mut image::RgbaImage, reference: &image::RgbaImage, strength: u8) {
-  let ai_weight = strength as u16;
-  let reference_weight = 100 - ai_weight;
-  for (output, original) in restored.pixels_mut().zip(reference.pixels()) {
-    for channel in 0..3 {
-      output[channel] = ((output[channel] as u16 * ai_weight + original[channel] as u16 * reference_weight + 50) / 100) as u8;
-    }
-    output[3] = original[3];
-  }
-}
-
-fn process_ai_restore_file(path: &Path, settings: &AiRestoreSettings, runtime: &RealEsrganRuntime) -> Result<(Status, Option<u64>, u32, u32, Option<String>, Option<String>), String> {
-  if !is_supported_image(path) { return Err("対応している画像ファイルではありません".into()); }
-  if !path.is_file() { return Err("入力画像を開けません".into()); }
-  if !matches!(settings.output_scale, 1 | 2 | 4) { return Err("出力倍率が正しくありません".into()); }
-  if settings.tile_size.is_some_and(|value| value != 0 && value < 32) { return Err("タイルサイズは自動または32 px以上にしてください".into()); }
-  if !(1..=100).contains(&settings.restoration_strength) { return Err("復元強度は1〜100%で指定してください".into()); }
-  let model_name = match settings.model.as_str() {
-    "natural" => "realesrnet-x4plus",
-    "detailed" => "realesrgan-x4plus",
-    _ => return Err("AI復元モデルが正しくありません".into()),
-  };
-
-  // GPUへ渡す前はヘッダーだけを読み、元画像全体のCPUデコードを避ける。
-  let (source_width, source_height) = input_dimensions(path)?;
-  let id = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| error.to_string())?.as_nanos();
-  let temporary_dir = std::env::temp_dir().join(format!("smartpng-ai-{}-{id}", std::process::id()));
-  fs::create_dir_all(&temporary_dir).map_err(|error| format!("一時フォルダーを作成できません: {error}"))?;
-  let temporary_input = temporary_dir.join("input.png");
-  let temporary_output = temporary_dir.join("output.png");
-  if is_png(path) {
-    fs::copy(path, &temporary_input).map_err(|error| format!("画像を処理用に準備できません: {error}"))?;
-  } else {
-    let source = load_input_image(path)?;
-    let has_alpha = source.color().has_alpha();
-    let source = source.to_rgba8();
-    let encoded = if has_alpha { encode_rgba(&source, source.width(), source.height())? } else { encode_rgb24(&source, source.width(), source.height())? };
-    fs::write(&temporary_input, encoded).map_err(|error| format!("画像を処理用PNGへ変換できません: {error}"))?;
-  }
-
-  // realesrgan-x4plus is a native 4x model. Always infer at 4x and downsample
-  // once for 1x/2x. In seamless mode, overlapping predictions are feathered
-  // externally because the NCNN runner's internal tile padding is too narrow.
-  let tile_size = settings.tile_size.unwrap_or(512);
-  let engine_result = if settings.seamless_tiles && tile_size > 0 {
-    process_ai_restore_seamless(&temporary_input, &temporary_output, &temporary_dir, source_width, source_height, tile_size, runtime, model_name)
-  } else {
-    run_realesrgan(runtime, &temporary_input, &temporary_output, tile_size, model_name)
-  };
-  if let Err(error) = engine_result {
-    let _ = fs::remove_dir_all(&temporary_dir);
-    return Err(error);
-  }
-
-  // Both bundled models infer at native 4x. Resize once to the requested size,
-  // then mix the original back in to keep colors and material detail natural.
-  let save_result = (|| {
-    let output_dir = if let Some(dir) = settings.output_dir.as_deref().filter(|value| !value.trim().is_empty()) {
-      PathBuf::from(dir)
-    } else {
-      path.parent().ok_or("入力元フォルダを取得できません")?.join("ai_restored")
-    };
-    fs::create_dir_all(&output_dir).map_err(|error| error.to_string())?;
-    let suffix = match settings.output_scale { 1 => "ai-restored", 2 => "ai-x2", _ => "ai-x4" };
-    let output_path = unique_named_output_path(&output_dir, path.file_stem().and_then(|value| value.to_str()).unwrap_or("image"), suffix);
-
-    let mode_label = if settings.model == "natural" { "自然復元" } else { "高精細復元" };
-    if settings.output_scale == 4 && settings.restoration_strength == 100 {
-      let (width, height) = image::image_dimensions(&temporary_output).map_err(|error| format!("AI復元結果を確認できません: {error}"))?;
-      let output_bytes = fs::copy(&temporary_output, &output_path).map_err(|error| format!("AI復元結果を保存できません: {error}"))?;
-      return Ok((Status::Done, Some(output_bytes), width, height, Some(format!("{mode_label}で4倍に拡大しました（強度100%）")), Some(output_path.to_string_lossy().to_string())));
-    }
-
-    let output_width = source_width.checked_mul(settings.output_scale).ok_or("出力幅が大きすぎます")?;
-    let output_height = source_height.checked_mul(settings.output_scale).ok_or("出力高が大きすぎます")?;
-    let processed = image::open(&temporary_output).map_err(|error| format!("AI復元結果を読み込めません: {error}"))?;
-    let mut has_alpha = processed.color().has_alpha();
-    let mut output = if processed.dimensions() == (output_width, output_height) { processed.to_rgba8() } else { processed.resize_exact(output_width, output_height, FilterType::Lanczos3).to_rgba8() };
-    if settings.restoration_strength < 100 {
-      let reference = image::open(&temporary_input).map_err(|error| format!("元画像を合成用に読み込めません: {error}"))?;
-      has_alpha = reference.color().has_alpha();
-      let reference = if reference.dimensions() == (output_width, output_height) { reference.to_rgba8() } else { reference.resize_exact(output_width, output_height, FilterType::Lanczos3).to_rgba8() };
-      blend_ai_restore_with_reference(&mut output, &reference, settings.restoration_strength);
-    }
-    let encoded = if has_alpha { encode_rgba(&output, output_width, output_height)? } else { encode_rgb24(&output, output_width, output_height)? };
-    fs::write(&output_path, &encoded).map_err(|error| format!("AI復元結果を保存できません: {error}"))?;
-    let size_message = match settings.output_scale { 1 => "元の寸法", 2 => "2倍", _ => "4倍" };
-    Ok((Status::Done, Some(encoded.len() as u64), output_width, output_height, Some(format!("{mode_label}・{size_message}で保存しました（強度{}%）", settings.restoration_strength)), Some(output_path.to_string_lossy().to_string())))
-  })();
-  let _ = fs::remove_dir_all(&temporary_dir);
-  save_result
 }
 
 fn process_file(path: &Path, settings: &Settings) -> Result<(Status, Option<u64>, u32, u32, Option<String>, Option<String>), String> {
@@ -748,23 +391,10 @@ fn pad_height_map_to_square(source: &image::RgbaImage) -> image::RgbaImage {
   padded
 }
 
+#[cfg(test)]
 fn build_texture_atlas(images: &[image::RgbaImage], pad_to_square: bool, square_resolution: Option<u32>) -> Result<image::RgbaImage, String> {
-  if images.len() != 4 { return Err("テクスチャアトラスには画像が4枚必要です".into()); }
-  if square_resolution.is_some_and(|value| !(16..=4096).contains(&value)) { return Err("1枠の解像度は16〜4096 pxで指定してください".into()); }
-  let max_width = images.iter().map(|image| image.width()).max().unwrap_or(1);
-  let max_height = images.iter().map(|image| image.height()).max().unwrap_or(1);
-  let (cell_width, cell_height) = if pad_to_square {
-    let size = square_resolution.unwrap_or_else(|| max_width.max(max_height));
-    (size, size)
-  } else { (max_width, max_height) };
-  let mut atlas = image::RgbaImage::from_pixel(cell_width * 2, cell_height * 2, image::Rgba([0, 0, 0, 0]));
-  for (index, image) in images.iter().enumerate() {
-    let fitted = fit_image_to_cell(image, cell_width, cell_height);
-    let x = (index as u32 % 2) * cell_width + (cell_width - fitted.width()) / 2;
-    let y = (index as u32 / 2) * cell_height + (cell_height - fitted.height()) / 2;
-    image::imageops::replace(&mut atlas, &fitted, x as i64, y as i64);
-  }
-  Ok(atlas)
+  let slots: Vec<_> = (0..4).map(|i| AtlasSlot { path: None, x: i % 2 * 2, y: i / 2 * 2, size: 2 }).collect();
+  atlas::render(&slots, &images.iter().cloned().map(Some).collect::<Vec<_>>(), pad_to_square, square_resolution)
 }
 
 fn fit_image_to_cell(image: &image::RgbaImage, cell_width: u32, cell_height: u32) -> image::RgbaImage {
@@ -828,11 +458,6 @@ fn encode_rgb24(image: &image::RgbaImage, width: u32, height: u32) -> Result<Vec
     let alpha = pixel[3] as u16;
     [((pixel[0] as u16 * alpha) / 255) as u8, ((pixel[1] as u16 * alpha) / 255) as u8, ((pixel[2] as u16 * alpha) / 255) as u8]
   }).collect();
-  encode_pixels(width, height, png::ColorType::Rgb, &pixels)
-}
-
-fn encode_rgb_channels(image: &image::RgbaImage, width: u32, height: u32) -> Result<Vec<u8>, String> {
-  let pixels: Vec<u8> = image.pixels().flat_map(|pixel| [pixel[0], pixel[1], pixel[2]]).collect();
   encode_pixels(width, height, png::ColorType::Rgb, &pixels)
 }
 
@@ -1080,7 +705,6 @@ fn build_app_menu<R: tauri::Runtime>(app: &AppHandle<R>, japanese: bool) -> taur
     .build()?;
   let tools = SubmenuBuilder::new(app, text("機能(&T)", "Tools (&T)"))
     .text("tab-optimize", text("画像最適化", "Image Optimization"))
-    .text("tab-restore", text("AI復元", "AI Restoration"))
     .text("tab-normal", text("ノーマルマップ", "Normal Map"))
     .text("tab-atlas", text("テクスチャアトラス", "Texture Atlas"))
     .text("tab-preview", text("3Dプレビュー", "3D Preview"))
@@ -1095,6 +719,12 @@ fn build_app_menu<R: tauri::Runtime>(app: &AppHandle<R>, japanese: bool) -> taur
     .text("scale-110", text("表示倍率 110%", "Display Scale 110%"))
     .text("scale-125", text("表示倍率 125%", "Display Scale 125%"))
     .build()?;
+  let japanese_item = CheckMenuItemBuilder::with_id("language-ja", "日本語")
+    .checked(japanese).build(app)?;
+  let english_item = CheckMenuItemBuilder::with_id("language-en", "English")
+    .checked(!japanese).build(app)?;
+  let language = SubmenuBuilder::new(app, text("言語(&L)", "Language (&L)"))
+    .items(&[&japanese_item, &english_item]).build()?;
   let about = AboutMetadataBuilder::new()
     .name(Some("Be Asset Optimizer"))
     .version(Some(env!("CARGO_PKG_VERSION")))
@@ -1105,7 +735,7 @@ fn build_app_menu<R: tauri::Runtime>(app: &AppHandle<R>, japanese: bool) -> taur
   let help = SubmenuBuilder::new(app, text("ヘルプ(&H)", "Help (&H)"))
     .about_with_text(text("バージョン情報", "About Be Asset Optimizer"), Some(about))
     .build()?;
-  MenuBuilder::new(app).items(&[&file, &tools, &view, &help]).build()
+  MenuBuilder::new(app).items(&[&file, &tools, &view, &language, &help]).build()
 }
 
 #[tauri::command]
@@ -1123,7 +753,7 @@ pub fn run() {
     .on_menu_event(|app, event| {
       let _ = app.emit("app-menu-action", event.id().as_ref());
     })
-    .invoke_handler(tauri::generate_handler![set_ui_locale, inspect_files, create_preview, load_model_package, process_batch, process_normal_batch, process_ai_restore_batch, create_texture_atlas, ai_components::get_ai_component_status, ai_components::install_ai_components, ai_components::cancel_ai_component_install, ai_components::remove_ai_components])
+    .invoke_handler(tauri::generate_handler![set_ui_locale, inspect_files, create_preview, load_model_package, process_batch, process_normal_batch, create_texture_atlas])
     .run(tauri::generate_context!())
     .expect("Be Asset Optimizer の起動に失敗しました");
 }
@@ -1288,14 +918,6 @@ mod tests {
     let info = reader.next_frame(&mut buffer).unwrap();
     assert_eq!(info.color_type, png::ColorType::Rgb);
     assert_eq!(&buffer[..3], &[100, 50, 25]);
-  }
-
-  #[test]
-  fn ai_restore_strength_blends_color_and_keeps_original_alpha() {
-    let mut restored = image::RgbaImage::from_pixel(1, 1, image::Rgba([200, 100, 0, 100]));
-    let reference = image::RgbaImage::from_pixel(1, 1, image::Rgba([100, 0, 200, 220]));
-    blend_ai_restore_with_reference(&mut restored, &reference, 50);
-    assert_eq!(restored.get_pixel(0, 0).0, [150, 50, 100, 220]);
   }
 
   #[test]
@@ -1507,59 +1129,6 @@ mod tests {
     }
     println!("full decode validation: {:?}", decode_started.elapsed());
     println!("loaded={}, failed={}", inspected.files.len(), inspected.failures.len());
-  }
-
-  #[test]
-  #[ignore = "requires a Vulkan-capable GPU and the bundled Real-ESRGAN runtime"]
-  fn ai_restore_runtime_writes_valid_fast_and_original_size_pngs() {
-    let id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    let root = std::env::temp_dir().join(format!("smartpng-ai-smoke-{}-{id}", std::process::id()));
-    let output_dir = root.join("output");
-    fs::create_dir_all(&root).unwrap();
-    let input = root.join("sample.png");
-    // 144 px crosses the 128 px core boundary on both axes, exercising the
-    // vertical, horizontal, and four-way overlap blends in one small image.
-    let pixels = (0..(144 * 144)).flat_map(|index| [index as u8, (index / 2) as u8, 180, 255]).collect();
-    let image = image::RgbaImage::from_raw(144, 144, pixels).unwrap();
-    fs::write(&input, encode_rgba(&image, 144, 144).unwrap()).unwrap();
-    let working_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources").join("realesrgan");
-    let runtime = RealEsrganRuntime { executable: working_dir.join("realesrgan-ncnn-vulkan.exe"), working_dir };
-    let settings = AiRestoreSettings { output_dir: Some(output_dir.to_string_lossy().to_string()), output_scale: 2, tile_size: Some(128), seamless_tiles: true, model: "natural".into(), restoration_strength: 50 };
-    let result = process_ai_restore_file(&input, &settings, &runtime).unwrap();
-    assert!(matches!(result.0, Status::Done));
-    assert_eq!((result.2, result.3), (288, 288));
-    let restored_path = result.5.unwrap();
-    assert_eq!(image::image_dimensions(&restored_path).unwrap(), (288, 288));
-    let restored = image::open(restored_path).unwrap().to_rgb8();
-    assert!(restored.get_pixel(250, 250).0.iter().any(|channel| *channel > 20));
-
-    let settings = AiRestoreSettings { output_dir: Some(output_dir.to_string_lossy().to_string()), output_scale: 1, tile_size: Some(128), seamless_tiles: false, model: "detailed".into(), restoration_strength: 100 };
-    let result = process_ai_restore_file(&input, &settings, &runtime).unwrap();
-    assert!(matches!(result.0, Status::Done));
-    assert_eq!((result.2, result.3), (144, 144));
-    assert_eq!(image::image_dimensions(result.5.unwrap()).unwrap(), (144, 144));
-
-    let heic = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata").join("flat_red_64.heic");
-    let settings = AiRestoreSettings { output_dir: Some(output_dir.to_string_lossy().to_string()), output_scale: 2, tile_size: Some(128), seamless_tiles: false, model: "natural".into(), restoration_strength: 50 };
-    let result = process_ai_restore_file(&heic, &settings, &runtime).unwrap();
-    assert!(matches!(result.0, Status::Done));
-    assert_eq!((result.2, result.3), (128, 128));
-    assert_eq!(image::image_dimensions(result.5.unwrap()).unwrap(), (128, 128));
-    fs::remove_dir_all(root).unwrap();
-  }
-
-  #[test]
-  #[ignore = "requires SMARTPNG_AI_SAMPLE, SMARTPNG_AI_OUTPUT_DIR, a Vulkan GPU, and the bundled runtime"]
-  fn real_ai_restore_sample_can_be_checked_with_seamless_tiles() {
-    let input = PathBuf::from(std::env::var("SMARTPNG_AI_SAMPLE").expect("SMARTPNG_AI_SAMPLE is required"));
-    let output_dir = PathBuf::from(std::env::var("SMARTPNG_AI_OUTPUT_DIR").expect("SMARTPNG_AI_OUTPUT_DIR is required"));
-    let working_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources").join("realesrgan");
-    let runtime = RealEsrganRuntime { executable: working_dir.join("realesrgan-ncnn-vulkan.exe"), working_dir };
-    let settings = AiRestoreSettings { output_dir: Some(output_dir.to_string_lossy().to_string()), output_scale: 1, tile_size: Some(512), seamless_tiles: true, model: "natural".into(), restoration_strength: 50 };
-    let result = process_ai_restore_file(&input, &settings, &runtime).unwrap();
-    assert!(matches!(result.0, Status::Done));
-    assert_eq!(image::image_dimensions(result.5.as_ref().unwrap()).unwrap(), input_dimensions(&input).unwrap());
-    println!("{}", result.5.unwrap());
   }
 
 }

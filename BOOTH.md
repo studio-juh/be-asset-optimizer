@@ -1,4 +1,4 @@
-# BOOTH掲載用テキスト — Be Asset Optimizer 0.6.1
+# BOOTH掲載用テキスト — Be Asset Optimizer 0.6.7
 
 以下の「商品名」「短い紹介文」「商品説明」はBOOTHの商品ページへ貼り付けて使用できます。公開前チェックは掲載文に含めません。
 
@@ -8,7 +8,7 @@
 
 ## 短い紹介文
 
-Blenderへ持ち込む前の画像を、まとめて軽量化・リサイズ・減色。ノーマルマップ、テクスチャアトラス、AI復元、FBX / GLBプレビューも備えたWindows用デスクトップツールです。
+Blenderへ持ち込む前の画像を、まとめて軽量化・リサイズ・減色。ノーマルマップ、テクスチャアトラス、FBX / GLBプレビューも備えたWindows用デスクトップツールです。
 
 ## 商品説明
 
@@ -27,14 +27,6 @@ Be Asset Optimizerは、Blenderで使う画像・テクスチャ・3Dアセッ�
 - ディザリングと圧縮強度の調整
 - 変換前後の寸法・容量・状態を一覧表示
 
-■ AI復元
-
-- Real-ESRGAN / RealESRNetによるローカル処理
-- 元の寸法 / 2倍 / 4倍出力
-- 自然さ重視 / 高精細モード
-- 復元強度、分割品質、境界ブレンドの調整
-- 必要なAI機能だけを後から追加
-
 ■ ノーマルマップ
 
 - 高さマップや画像の明度から一括生成
@@ -43,7 +35,8 @@ Be Asset Optimizerは、Blenderで使う画像・テクスチャ・3Dアセッ�
 
 ■ テクスチャアトラス
 
-- 4枚を2×2アトラスへ結合
+- 1〜16枚をアトラスへ結合（空き枠は黒）
+- 1枠を4分割して7枚配置などに対応
 - 任意の枠へのドロップとドラッグ入れ替え
 - 正方形補完とセル解像度指定
 
@@ -69,23 +62,14 @@ HEIC / HEIFはWindowsの追加コーデックなしで読み込めます。GIF�
 - Windows 10 / 11 64-bit
 - Microsoft Edge WebView2 Runtime
 - 960 × 640以上の画面
-- AI復元のみ: Vulkan対応GPU、最新のGPUドライバー
-- AI機能の初回追加時のみインターネット接続と約70 MBの空き容量
 
-AI復元以外の機能はAIモデルや対応GPUなしで利用できます。
 
 ### 配布ファイル
 
-- セットアップ版: `Be_Asset_Optimizer_0.6.1_BOOTH_Setup.zip`（インストーラー、README、ライセンスを同梱）
-- ポータブル版: `Be_Asset_Optimizer_0.6.1_windows_x64_portable.zip`
+- セットアップ版: `Be_Asset_Optimizer_0.6.7_BOOTH_Setup.zip`（インストーラー、README、ライセンスを同梱）
+- ポータブル版: `Be_Asset_Optimizer_0.6.7_windows_x64_portable.zip`
 
 通常はセットアップ版がおすすめです。インストールせず試したい場合やUSBメモリ等で持ち運ぶ場合はポータブル版を使用してください。両方の機能は同じです。
-
-### AI機能について
-
-AI復元を初めて使うときに、アプリ内から約61 MBのAIコンポーネントを取得します。4分割で並列取得し、ZIPと各ファイルのSHA-256が一致した場合だけ保存します。追加後の復元処理はPC内で実行され、画像はアップロードされません。
-
-AI処理は元画像にない細部を推測するため、画像によっては模様・ぼかし・タイル状の違和感が生じる場合があります。ノーマル、粗さ、金属、マスク画像への直接使用は推奨しません。
 
 ### ご注意
 
@@ -102,9 +86,6 @@ AI処理は元画像にない細部を推測するため、画像によっては
 ソースコード:
 https://github.com/studio-juh/be-asset-optimizer
 
-AIコンポーネント:
-https://github.com/studio-juh/be-asset-optimizer/releases/tag/ai-components-v1.0.0
-
 不具合報告:
 https://github.com/studio-juh/be-asset-optimizer/issues
 
@@ -120,7 +101,6 @@ https://github.com/studio-juh/be-asset-optimizer/issues
 4. ノーマルマップ生成画面
 5. 2×2テクスチャアトラス画面
 6. FBX / GLBプレビュー画面
-7. AI復元は任意追加・ローカル処理であることの説明
 
 ## BOOTHへ登録するファイル
 
@@ -137,10 +117,8 @@ https://github.com/studio-juh/be-asset-optimizer/issues
 - [ ] BOOTHへ載せるバージョンとファイル名が一致している
 - [ ] セットアップ版とポータブル版を別のWindowsユーザー環境で起動できる
 - [ ] Windowsの警告表示について商品説明へ記載した
-- [ ] AI機能の追加、キャンセル、削除、再追加を確認した
-- [ ] AIコンポーネントを削除した状態で通常機能が使える
 - [ ] 公開バイナリと同じソースをGitHubへpushした
-- [ ] `v0.6.1` タグまたはReleaseから対応ソースを取得できる
+- [ ] `v0.6.7` タグまたはReleaseから対応ソースを取得できる
 - [ ] `LICENSE` と `THIRD_PARTY_NOTICES.md` を配布物へ同梱した
 - [ ] 配布ファイルのSHA-256を控えた
 - [ ] 商品ページのスクリーンショットに個人情報やローカルパスが写っていない

@@ -4,8 +4,19 @@ export type AppLocale = "en" | "ja";
 
 const detectedLanguage = storePreviewLanguage ?? (typeof navigator === "undefined" ? "en" : navigator.language);
 
-export const locale: AppLocale = /^ja(?:-|$)/i.test(detectedLanguage) ? "ja" : "en";
-export const isJapanese = locale === "ja";
+const savedLanguage = typeof localStorage === "undefined" ? null : localStorage.getItem("be-asset-optimizer-language-v1");
+export let locale: AppLocale = storePreviewLanguage === "ja" || storePreviewLanguage === "en"
+  ? storePreviewLanguage
+  : savedLanguage === "ja" || savedLanguage === "en" ? savedLanguage
+  : /^ja(?:-|$)/i.test(detectedLanguage) ? "ja" : "en";
+export let isJapanese = locale === "ja";
+
+export function setLocale(value: AppLocale) {
+  locale = value;
+  isJapanese = value === "ja";
+  localStorage.setItem("be-asset-optimizer-language-v1", value);
+  document.documentElement.lang = value;
+}
 
 export function t(japanese: string, english: string) {
   return isJapanese ? japanese : english;

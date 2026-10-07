@@ -17,7 +17,9 @@ type ModelStats = { meshes: number; triangles: number; materials: number; animat
 
 const emptyStats: ModelStats = { meshes: 0, triangles: 0, materials: 0, animations: 0 };
 
-export default function ModelPreview() {
+export default function ModelPreview({ active = true }: { active?: boolean }) {
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const viewportRef = useRef<HTMLDivElement>(null);
   const modelRef = useRef<THREE.Group | null>(null);
   const gridRef = useRef<THREE.GridHelper | null>(null);
@@ -29,7 +31,7 @@ export default function ModelPreview() {
   const actionRef = useRef<THREE.AnimationAction | null>(null);
   const autoRotateRef = useRef(false);
   const [model, setModel] = useState<ModelPackage>();
-  const [notice, setNotice] = useState(t("FBXをドロップしてください", "Drop an FBX file"));
+  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
   const [wireframe, setWireframe] = useState(false);
   const [showGrid, setShowGrid] = useState(true);
@@ -49,6 +51,8 @@ export default function ModelPreview() {
       setNotice(t("モデルを読み込みました", "Model loaded"));
     } catch (error) {
       setModel(undefined);
+      setStats(emptyStats);
+      setResolutions([]);
       setNotice(localizedDetail(error, "Could not load the 3D model"));
     } finally { setLoading(false); }
   };
@@ -66,8 +70,8 @@ export default function ModelPreview() {
     };
     const onMenuOpen = () => { void chooseModel(); };
     window.addEventListener("smartpng-model-drop", onDrop);
-    window.addEventListener("smartpng-menu-open", onMenuOpen);
-    return () => { window.removeEventListener("smartpng-model-drop", onDrop); window.removeEventListener("smartpng-menu-open", onMenuOpen); };
+    window.addEventListener("smartpng-preview-menu-open", onMenuOpen);
+    return () => { window.removeEventListener("smartpng-model-drop", onDrop); window.removeEventListener("smartpng-preview-menu-open", onMenuOpen); };
   }, []);
 
   useEffect(() => { autoRotateRef.current = autoRotate; }, [autoRotate]);
@@ -84,14 +88,13 @@ export default function ModelPreview() {
 
   useEffect(() => {
     const viewport = viewportRef.current;
-    if (!viewport || !model) return;
+    if (!viewport) return;
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(42, 1, 0.01, 100000);
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.shadowMap.enabled = true;
     viewport.appendChild(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -100,6 +103,13 @@ export default function ModelPreview() {
     controls.screenSpacePanning = true;
     cameraRef.current = camera;
     controlsRef.current = controls;
+    camera.position.set(5.4, 3.6, 5.4);
+    controls.update();
+    initialViewDirectionRef.current = camera.position.clone().normalize();
+    let grid = new THREE.GridHelper(16, 20, 0x718096, 0xa7b0bd);
+    grid.visible = showGrid;
+    gridRef.current = grid;
+    scene.add(grid);
 
     scene.add(new THREE.HemisphereLight(0xffffff, 0x536078, 2.2));
     const keyLight = new THREE.DirectionalLight(0xffffff, 3.2);
@@ -117,7 +127,7 @@ export default function ModelPreview() {
     const flushResolutions = () => setResolutions(Array.from(resultMap.values()).sort((a, b) => a.request.localeCompare(b.request)));
     manager.setURLModifier((url) => {
       if (/^(data:|blob:)/i.test(url)) return url;
-      const match = findTexture(url, model.textures);
+      const match = findTexture(url, model?.textures ?? []);
       if (!match) {
         resultMap.set(url, { request: readableRequest(url), status: "missing" });
         return url;
@@ -148,8 +158,6 @@ export default function ModelPreview() {
       initialModelQuaternionRef.current = root.quaternion.clone();
       root.traverse((object) => {
         if (!(object instanceof THREE.Mesh)) return;
-        object.castShadow = true;
-        object.receiveShadow = true;
         for (const material of asMaterials(object.material)) setMaterialWireframe(material, wireframe);
       });
 
@@ -168,7 +176,10 @@ export default function ModelPreview() {
       controls.update();
       initialViewDirectionRef.current = camera.position.clone().sub(controls.target).normalize();
 
-      const grid = new THREE.GridHelper(diameter * 4, 20, 0x718096, 0xa7b0bd);
+      scene.remove(grid);
+      grid.geometry.dispose();
+      asMaterials(grid.material).forEach((material) => material.dispose());
+      grid = new THREE.GridHelper(diameter * 4, 20, 0x718096, 0xa7b0bd);
       grid.position.y = -size.y / 2;
       grid.visible = showGrid;
       gridRef.current = grid;
@@ -185,40 +196,42 @@ export default function ModelPreview() {
         actionRef.current = action;
       }
       window.setTimeout(flushResolutions, 0);
-      setNotice(t(`${model.name}を表示しています`, `Displaying ${model.name}`));
-
-      const resize = () => {
-        const width = Math.max(viewport.clientWidth, 1);
-        const height = Math.max(viewport.clientHeight, 1);
-        camera.aspect = width / height;
-        camera.updateProjectionMatrix();
-        renderer.setSize(width, height, false);
-      };
-      resizeObserver = new ResizeObserver(resize);
-      resizeObserver.observe(viewport);
-      resize();
-
-      const clock = new THREE.Clock();
-      const render = () => {
-        frame = requestAnimationFrame(render);
-        const delta = Math.min(clock.getDelta(), 0.05);
-        mixerRef.current?.update(delta);
-        if (autoRotateRef.current && root) root.rotation.y += delta * 0.45;
-        controls.update();
-        renderer.render(scene, camera);
-      };
-      render();
+      setNotice("");
     };
 
-    const bytes = decodeBase64(model.bytesBase64);
-    try {
-      if (model.path.toLowerCase().endsWith(".glb")) {
-        new GLTFLoader(manager).parse(bytes, "", (gltf) => showModel(gltf.scene, gltf.animations), (error) => setNotice(t(`GLBを表示できません: ${String(error)}`, `Could not display the GLB: ${localizedDetail(error, "The model could not be parsed")}`)));
-      } else {
-        const loadedRoot = new FBXLoader(manager).parse(bytes, "");
-        showModel(loadedRoot, loadedRoot.animations);
-      }
-    } catch (error) { setNotice(t(`3Dモデルを表示できません: ${String(error)}`, `Could not display the 3D model: ${localizedDetail(error, "The model could not be parsed")}`)); }
+    const resize = () => {
+      const width = Math.max(viewport.clientWidth, 1);
+      const height = Math.max(viewport.clientHeight, 1);
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      renderer.setSize(width, height, false);
+    };
+    resizeObserver = new ResizeObserver(resize);
+    resizeObserver.observe(viewport);
+    resize();
+
+    const clock = new THREE.Clock();
+    const render = () => {
+      frame = requestAnimationFrame(render);
+      const delta = Math.min(clock.getDelta(), 0.05);
+      if (!activeRef.current) return;
+      mixerRef.current?.update(delta);
+      if (autoRotateRef.current && root) root.rotation.y += delta * 0.45;
+      controls.update();
+      renderer.render(scene, camera);
+    };
+    render();
+    if (model) {
+      const bytes = decodeBase64(model.bytesBase64);
+      try {
+        if (model.path.toLowerCase().endsWith(".glb")) {
+          new GLTFLoader(manager).parse(bytes, "", (gltf) => showModel(gltf.scene, gltf.animations), (error) => setNotice(t(`GLBを表示できません: ${String(error)}`, `Could not display the GLB: ${localizedDetail(error, "The model could not be parsed")}`)));
+        } else {
+          const loadedRoot = new FBXLoader(manager).parse(bytes, "");
+          showModel(loadedRoot, loadedRoot.animations);
+        }
+      } catch (error) { setNotice(t(`3Dモデルを表示できません: ${String(error)}`, `Could not display the 3D model: ${localizedDetail(error, "The model could not be parsed")}`)); }
+    }
 
     return () => {
       disposed = true;
@@ -235,6 +248,8 @@ export default function ModelPreview() {
       modelRef.current = null;
       gridRef.current = null;
       if (root) disposeObject(root);
+      grid.geometry.dispose();
+      asMaterials(grid.material).forEach((material) => material.dispose());
       renderer.dispose();
       renderer.domElement.remove();
     };
@@ -254,23 +269,25 @@ export default function ModelPreview() {
     controls.update();
   };
 
-  if (!model) return <section className="model-preview-empty">
-    <button className="drop-zone" onClick={chooseModel} disabled={loading}>
-      <strong>{loading ? t("読み込み中…", "Loading…") : t("FBX / GLBをドロップ", "Drop FBX / GLB")}</strong>
-      <span>{t("FBXの相対テクスチャとGLBの埋め込み画像に対応", "Supports relative FBX textures and embedded GLB images")}</span>
-      <small>{notice}</small>
-    </button>
-  </section>;
+  const clearModel = () => {
+    setAutoRotate(false);
+    autoRotateRef.current = false;
+    setModel(undefined);
+    setStats(emptyStats);
+    setResolutions([]);
+    setNotice("");
+  };
 
   const missingCount = resolutions.filter((item) => item.status !== "found").length;
   return <section className="model-preview">
     <div className="model-toolbar">
-      <div className="model-title"><strong title={model.path}>{model.name}</strong><span>{t(`${formatBytes(model.fileBytes)} ・ メッシュ ${stats.meshes} ・ 三角形 ${stats.triangles.toLocaleString()}`, `${formatBytes(model.fileBytes)} · ${stats.meshes} meshes · ${stats.triangles.toLocaleString()} triangles`)}</span></div>
-      <div className="model-actions"><button onClick={chooseModel}>{t("別のモデル", "Choose Another")}</button><button onClick={() => revealItemInDir(model.path)}>{t("保存場所", "Show Location")}</button></div>
+      <div className="model-title"><strong title={model?.path}>{model?.name ?? t("3Dプレビュー", "3D Preview")}</strong>{model && <span>{t(`${formatBytes(model.fileBytes)} ・ メッシュ ${stats.meshes} ・ 三角形 ${stats.triangles.toLocaleString()}`, `${formatBytes(model.fileBytes)} · ${stats.meshes} meshes · ${stats.triangles.toLocaleString()} triangles`)}</span>}{notice && <span role="status">{notice}</span>}</div>
+      <div className="model-actions"><button onClick={clearModel} disabled={!model || loading}>{t("クリア", "Clear")}</button><button onClick={chooseModel} disabled={loading}>{model ? t("別のモデル", "Choose Another") : t("モデルを開く", "Open Model")}</button><button disabled={!model} onClick={() => model && revealItemInDir(model.path)}>{t("保存場所", "Show Location")}</button></div>
     </div>
     <div className="model-content">
       <div className="model-stage">
         <div ref={viewportRef} className="model-viewport" />
+        {(!model || loading) && <div className="model-drop-prompt">{loading ? t("読み込み中…", "Loading…") : t("FBX / GLBをドロップ", "Drop FBX / GLB")}</div>}
         <div className="model-view-options">
           <label><input type="checkbox" checked={showGrid} onChange={(event) => setShowGrid(event.target.checked)} />{t("グリッド", "Grid")}</label>
           <label><input type="checkbox" checked={wireframe} onChange={(event) => setWireframe(event.target.checked)} />{t("ワイヤー", "Wireframe")}</label>
@@ -278,16 +295,15 @@ export default function ModelPreview() {
           <button onClick={resetRotation}>{t("回転リセット", "Reset Rotation")}</button>
           {stats.animations > 0 && <button onClick={() => setPlaying((value) => !value)}>{playing ? t("停止", "Pause") : t("再生", "Play")}</button>}
         </div>
-        <div className="model-help">{t("左ドラッグ：回転　右ドラッグ：移動　ホイール：ズーム", "Left drag: rotate · Right drag: pan · Wheel: zoom")}</div>
       </div>
       <aside className="model-inspector">
-        <div className="model-summary"><div><span>{t("テクスチャ候補", "Texture Candidates")}</span><strong>{model.textures.length}</strong></div><div className={missingCount ? "warning" : "ok"}><span>{t("不足・読込失敗", "Missing / Failed")}</span><strong>{missingCount}</strong></div></div>
+        <div className="model-summary"><div><span>{t("テクスチャ候補", "Texture Candidates")}</span><strong>{model?.textures.length ?? 0}</strong></div><div className={missingCount ? "warning" : "ok"}><span>{t("不足・読込失敗", "Missing / Failed")}</span><strong>{missingCount}</strong></div></div>
         <h3>{t("テクスチャ参照", "Texture References")}</h3>
         {resolutions.length ? <div className="texture-resolution-list">{resolutions.map((item, index) => <div className={`texture-resolution ${item.status}`} key={`${item.request}-${index}`}>
           <span className="resolution-mark">{item.status === "found" ? "✓" : "!"}</span>
-          <div><strong title={item.request}>{fileName(item.request)}</strong><small title={item.resolvedPath ?? item.request}>{item.resolvedPath ? relativeForDisplay(item.resolvedPath, model.path) : item.request}</small></div>
-        </div>)}</div> : <p className="model-empty-note">{t("外部テクスチャ参照は検出されませんでした。GLBの埋め込み画像、またはマテリアルなしの可能性があります。", "No external texture references were detected. The model may use embedded GLB images or have no materials.")}</p>}
-        {model.scanLimited && <p className="model-warning">{t("画像が多いため、探索は1,500件で打ち切りました。", "The texture scan stopped after 1,500 files.")}</p>}
+          <div><strong title={item.request}>{fileName(item.request)}</strong><small title={item.resolvedPath ?? item.request}>{item.resolvedPath ? relativeForDisplay(item.resolvedPath, model!.path) : item.request}</small></div>
+        </div>)}</div> : <p className="model-empty-note">{t("参照なし", "No references")}</p>}
+        {model?.scanLimited && <p className="model-warning">{t("画像が多いため、探索は1,500件で打ち切りました。", "The texture scan stopped after 1,500 files.")}</p>}
         <div className="model-stats"><span>{t(`マテリアル ${stats.materials}`, `Materials ${stats.materials}`)}</span><span>{t(`アニメーション ${stats.animations}`, `Animations ${stats.animations}`)}</span></div>
       </aside>
     </div>

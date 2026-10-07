@@ -6,11 +6,10 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import NormalMap from "./NormalMap";
-import AiRestore from "./AiRestore";
 import TextureAtlas from "./TextureAtlas";
 import Thumbnail from "./Thumbnail";
 import { InspectProgress, InspectResult, supportedImageFilter, supportedImageShortLabel } from "./imageFiles";
-import { locale, localizedDetail, t } from "./i18n";
+import { locale, localizedDetail, setLocale, t } from "./i18n";
 import { storePreview, storePreviewTab, StorePreviewTab } from "./storePreview";
 
 const ModelPreview = lazy(() => import("./ModelPreview"));
@@ -90,7 +89,9 @@ const dimensions = (width?: number, height?: number) =>
   width && height ? `${width} × ${height}` : "—";
 
 export default function App() {
+  const [appLocale, setAppLocale] = useState(locale);
   const [activeTab, setActiveTab] = useState<StorePreviewTab>(storePreviewTab);
+  const [visitedTabs, setVisitedTabs] = useState<Set<StorePreviewTab>>(() => new Set([storePreviewTab]));
   const activeTabRef = useRef(activeTab);
   const [displayScale, setDisplayScale] = useState(() => {
     const saved = Number(localStorage.getItem("smartpng-display-scale-v2"));
@@ -109,9 +110,9 @@ export default function App() {
       document.title = t("Be Asset Optimizer — Blender向けアセット最適化", "Be Asset Optimizer — Blender Asset Optimization");
       return;
     }
-    void invoke("set_ui_locale", { locale });
+    void invoke("set_ui_locale", { locale: appLocale });
     void getCurrentWindow().setTitle(t("Be Asset Optimizer — Blender向けアセット最適化", "Be Asset Optimizer — Blender Asset Optimization"));
-  }, []);
+  }, [appLocale]);
 
   useEffect(() => {
     if (storePreview) return;
@@ -142,7 +143,6 @@ export default function App() {
       }
       if (event.payload.type !== "drop") return;
       if (activeTab === "preview") window.dispatchEvent(new CustomEvent("smartpng-model-drop", { detail: event.payload.paths }));
-      else if (activeTab === "restore") window.dispatchEvent(new CustomEvent("smartpng-ai-restore-drop", { detail: event.payload.paths }));
       else if (activeTab === "normal") window.dispatchEvent(new CustomEvent("smartpng-normal-drop", { detail: event.payload.paths }));
       else void addPaths(event.payload.paths);
     });
@@ -160,7 +160,10 @@ export default function App() {
     localStorage.setItem("smartpng-theme-v1", theme);
   }, [theme]);
 
-  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+    setVisitedTabs(current => current.has(activeTab) ? current : new Set([...current, activeTab]));
+  }, [activeTab]);
 
   const addPaths = async (paths: string[]) => {
     if (!paths.length) return;
@@ -201,12 +204,13 @@ export default function App() {
     if (storePreview) return;
     const unlistenMenu = listen<string>("app-menu-action", (event) => {
       switch (event.payload) {
+        case "language-ja": setLocale("ja"); setAppLocale("ja"); break;
+        case "language-en": setLocale("en"); setAppLocale("en"); break;
         case "file-open":
           if (activeTabRef.current === "optimize") void chooseFiles();
-          else window.dispatchEvent(new Event("smartpng-menu-open"));
+          else window.dispatchEvent(new Event(`smartpng-${activeTabRef.current}-menu-open`));
           break;
         case "tab-optimize": setActiveTab("optimize"); break;
-        case "tab-restore": setActiveTab("restore"); break;
         case "tab-normal": setActiveTab("normal"); break;
         case "tab-atlas": setActiveTab("atlas"); break;
         case "tab-preview": setActiveTab("preview"); break;
@@ -263,26 +267,27 @@ export default function App() {
     <nav className="tabs" aria-label={t("機能", "Tools")}>
       <button className={`primary-tool ${activeTab === "optimize" ? "active" : ""}`} onClick={() => setActiveTab("optimize")}>{t("画像最適化", "Image Optimization")}</button>
       <span className="tab-separator" aria-hidden="true" />
-      <button className={activeTab === "restore" ? "active" : ""} onClick={() => setActiveTab("restore")}>{t("AI復元", "AI Restoration")}</button>
       <button className={activeTab === "normal" ? "active" : ""} onClick={() => setActiveTab("normal")}>{t("ノーマルマップ", "Normal Map")}</button>
       <button className={activeTab === "atlas" ? "active" : ""} onClick={() => setActiveTab("atlas")}>{t("テクスチャアトラス", "Texture Atlas")}</button>
       <button className={activeTab === "preview" ? "active" : ""} onClick={() => setActiveTab("preview")}>{t("3Dプレビュー", "3D Preview")}</button>
       <div className="view-controls"><label className="theme-control">{t("テーマ", "Theme")} <select value={theme} onChange={(event) => setTheme(event.target.value as "light" | "dark")}><option value="light">{t("ライト（既定）", "Light (default)")}</option><option value="dark">{t("ダーク", "Dark")}</option></select></label><label className="display-scale">{t("表示", "View")} <select value={displayScale} onChange={(event) => setDisplayScale(Number(event.target.value))}><option value="0.8">80%</option><option value="0.9">90%</option><option value="1">{t("100%（既定）", "100% (default)")}</option><option value="1.1">110%</option><option value="1.25">125%</option></select></label></div>
     </nav>
-    {activeTab === "optimize" ? <section className="workspace">
+    <div className="tool-panel" hidden={activeTab !== "optimize"}><section className="workspace">
       <aside className="settings">
         <h2>{t("変換設定", "Conversion Settings")}</h2>
         <label>{t("出力先", "Output folder")} <div className="path-row"><input value={settings.outputDir} onChange={(e) => setSettings({ ...settings, outputDir: e.target.value })} placeholder={t("入力元 / optimized", "Source folder / optimized")} /><button onClick={chooseOutput}>{t("選択", "Choose")}</button></div></label>
-        <fieldset><legend>{t("出力形式", "Output Format")}</legend><label>{t("ファイル形式", "File format")}<select value={settings.outputFormat} onChange={(e) => setSettings({ ...settings, outputFormat: e.target.value as Settings["outputFormat"] })}><option value="png">{t("PNG（既定）", "PNG (default)")}</option><option value="webp">WebP</option><option value="jpeg">JPEG</option></select></label>{settings.outputFormat !== "png" && <><label>{t("品質", "Quality")}<div className="range-row"><input type="range" min="1" max="100" value={settings.quality} onChange={(e) => setSettings({ ...settings, quality: e.target.value })} /><output>{settings.quality}</output></div></label>{settings.outputFormat === "jpeg" && <label>{t("透明部分の背景", "Transparent-area background")}<select value={settings.jpegBackground} onChange={(e) => setSettings({ ...settings, jpegBackground: e.target.value as Settings["jpegBackground"] })}><option value="white">{t("白", "White")}</option><option value="black">{t("黒", "Black")}</option></select></label>}<p className="mode-note">{settings.outputFormat === "webp" ? t("透過を保持できる非可逆WebPです。", "Lossy WebP with transparency support.") : t("JPEGは透過を保持できません。", "JPEG does not support transparency.")}</p></>}</fieldset>
+        <fieldset><legend>{t("出力形式", "Output Format")}</legend><label>{t("ファイル形式", "File format")}<select value={settings.outputFormat} onChange={(e) => setSettings({ ...settings, outputFormat: e.target.value as Settings["outputFormat"] })}><option value="png">{t("PNG（既定）", "PNG (default)")}</option><option value="webp">WebP</option><option value="jpeg">JPEG</option></select></label>{settings.outputFormat !== "png" && <><label>{t("品質", "Quality")}<div className="range-row"><input type="range" min="1" max="100" value={settings.quality} onChange={(e) => setSettings({ ...settings, quality: e.target.value })} /><output>{settings.quality}</output></div></label>{settings.outputFormat === "jpeg" && <label>{t("透明部分の背景", "Transparent-area background")}<select value={settings.jpegBackground} onChange={(e) => setSettings({ ...settings, jpegBackground: e.target.value as Settings["jpegBackground"] })}><option value="white">{t("白", "White")}</option><option value="black">{t("黒", "Black")}</option></select></label>}</>}</fieldset>
         <fieldset><legend>{t("リサイズ", "Resize")}</legend><div className="split"><label>{t("最大幅", "Max width")}<select value={settings.maxWidth} onChange={(e) => setSettings({ ...settings, maxWidth: e.target.value })}><option value="">{t("指定なし", "No limit")}</option><option value="256">256 px</option><option value="512">512 px</option><option value="1024">1024 px</option><option value="2048">2048 px</option><option value="4096">4096 px</option><option value="custom">Custom…</option></select>{settings.maxWidth === "custom" && <input inputMode="numeric" value={settings.customMaxWidth} onChange={(e) => setSettings({ ...settings, customMaxWidth: e.target.value })} placeholder="px" />}</label><label>{t("最大高", "Max height")}<select value={settings.maxHeight} onChange={(e) => setSettings({ ...settings, maxHeight: e.target.value })}><option value="">{t("指定なし", "No limit")}</option><option value="256">256 px</option><option value="512">512 px</option><option value="1024">1024 px</option><option value="2048">2048 px</option><option value="4096">4096 px</option><option value="custom">Custom…</option></select>{settings.maxHeight === "custom" && <input inputMode="numeric" value={settings.customMaxHeight} onChange={(e) => setSettings({ ...settings, customMaxHeight: e.target.value })} placeholder="px" />}</label></div><label>{t("倍率 %", "Scale %")}<input inputMode="numeric" value={settings.scalePercent} onChange={(e) => setSettings({ ...settings, scalePercent: e.target.value })} placeholder={t("空欄なら寸法指定", "Leave blank to use dimensions")} /></label><div className="segmented"><button className={settings.resizeMode === "lanczos3" ? "active" : ""} onClick={() => setSettings({ ...settings, resizeMode: "lanczos3" })}>{t("高品質", "High quality")}</button><button className={settings.resizeMode === "nearest" ? "active" : ""} onClick={() => setSettings({ ...settings, resizeMode: "nearest" })}>{t("ピクセルアート", "Pixel art")}</button></div></fieldset>
-        {settings.outputFormat === "png" && <><fieldset><legend>{t("ピクセル形式", "Pixel Format")}</legend><label>{t("PNG形式", "PNG format")}<select value={settings.colorMode} onChange={(e) => setSettings({ ...settings, colorMode: e.target.value as Settings["colorMode"] })}><option value="auto">{t("自動・可逆（推奨）", "Automatic, lossless (recommended)")}</option><option value="indexed">{t("PNG-8 減色（非可逆）", "PNG-8 indexed (lossy)")}</option><option value="rgb24">{t("PNG-24 RGB（透明なし）", "PNG-24 RGB (no transparency)")}</option><option value="rgba32">{t("PNG-32 RGBA（透明を保持）", "PNG-32 RGBA (keep transparency)")}</option><option value="grayscale8">{t("グレースケール 8-bit", "8-bit grayscale")}</option></select></label>{settings.colorMode === "indexed" && <><label>{t("色数", "Colors")}<select value={settings.colors} onChange={(e) => setSettings({ ...settings, colors: e.target.value })}><option value="256">{t("256 色", "256 colors")}</option><option value="128">{t("128 色", "128 colors")}</option><option value="64">{t("64 色", "64 colors")}</option><option value="32">{t("32 色", "32 colors")}</option><option value="16">{t("16 色", "16 colors")}</option></select></label><label className="checkbox"><input type="checkbox" checked={settings.dithering} onChange={(e) => setSettings({ ...settings, dithering: e.target.checked })} />{t("ディザリングを使う", "Use dithering")}</label></>}<p className="mode-note">{settings.colorMode === "rgb24" ? t("透明部分は黒背景へ合成します。", "Transparent areas are composited onto black.") : settings.colorMode === "rgba32" ? t("アルファを必ず保持します。", "Always keeps the alpha channel.") : settings.colorMode === "grayscale8" ? t("明度のみを保持します。", "Keeps luminance only.") : settings.colorMode === "indexed" ? t("非可逆の減色です。品質が 90 未満になる画像は、可逆最適化へ自動で切り替えます。ノーマルマップにはこちらを推奨しません。", "Lossy color reduction. Images scoring below 90 quality automatically fall back to lossless optimization. Not recommended for normal maps.") : t("画素の値・色数・透過を変えない可逆圧縮です。", "Lossless compression that preserves pixels, colors, and transparency.")}</p></fieldset><fieldset><legend>{t("最終最適化", "Final Optimization")}</legend><div className="segmented"><button className={settings.optimization === "fast" ? "active" : ""} onClick={() => setSettings({ ...settings, optimization: "fast" })}>{t("高速", "Fast")}</button><button className={settings.optimization === "safe" ? "active" : ""} onClick={() => setSettings({ ...settings, optimization: "safe" })}>{t("標準", "Standard")}</button><button className={settings.optimization === "max" ? "active" : ""} onClick={() => setSettings({ ...settings, optimization: "max" })}>{t("最大", "Maximum")}</button></div><p className="mode-note">{t("高速は圧縮探索を抑えます。最大はより小さくなりますが時間がかかります。", "Fast limits compression search. Maximum produces smaller files but takes longer.")}</p></fieldset></>}
-        <p className="hint">{t("PNG、JPEG、WebP、HEIC、BMP、TIFF、GIF、TGA、DDSに対応します。GIFは先頭フレームを使用します。元ファイルは変更しません。", "Supports PNG, JPEG, WebP, HEIC, BMP, TIFF, GIF, TGA, and DDS. The first GIF frame is used. Source files are never modified.")}</p>
+        {settings.outputFormat === "png" && <><fieldset><legend>{t("ピクセル形式", "Pixel Format")}</legend><label>{t("PNG形式", "PNG format")}<select value={settings.colorMode} onChange={(e) => setSettings({ ...settings, colorMode: e.target.value as Settings["colorMode"] })}><option value="auto">{t("自動・可逆（推奨）", "Automatic, lossless (recommended)")}</option><option value="indexed">{t("PNG-8 減色（非可逆）", "PNG-8 indexed (lossy)")}</option><option value="rgb24">{t("PNG-24 RGB（透明なし）", "PNG-24 RGB (no transparency)")}</option><option value="rgba32">{t("PNG-32 RGBA（透明を保持）", "PNG-32 RGBA (keep transparency)")}</option><option value="grayscale8">{t("グレースケール 8-bit", "8-bit grayscale")}</option></select></label>{settings.colorMode === "indexed" && <><label>{t("色数", "Colors")}<select value={settings.colors} onChange={(e) => setSettings({ ...settings, colors: e.target.value })}><option value="256">{t("256 色", "256 colors")}</option><option value="128">{t("128 色", "128 colors")}</option><option value="64">{t("64 色", "64 colors")}</option><option value="32">{t("32 色", "32 colors")}</option><option value="16">{t("16 色", "16 colors")}</option></select></label><label className="checkbox"><input type="checkbox" checked={settings.dithering} onChange={(e) => setSettings({ ...settings, dithering: e.target.checked })} />{t("ディザリングを使う", "Use dithering")}</label></>}</fieldset><fieldset><legend>{t("最終最適化", "Final Optimization")}</legend><div className="segmented"><button className={settings.optimization === "fast" ? "active" : ""} onClick={() => setSettings({ ...settings, optimization: "fast" })}>{t("高速", "Fast")}</button><button className={settings.optimization === "safe" ? "active" : ""} onClick={() => setSettings({ ...settings, optimization: "safe" })}>{t("標準", "Standard")}</button><button className={settings.optimization === "max" ? "active" : ""} onClick={() => setSettings({ ...settings, optimization: "max" })}>{t("最大", "Maximum")}</button></div></fieldset></>}
       </aside>
       <section className="queue">
         <div className="queue-toolbar"><div><h2>{t("処理リスト", "Processing Queue")} <span>{jobs.length}</span></h2><p>{isLoading ? notice : totals.output ? sizeChange : notice}</p></div><div className="actions"><button className="secondary" onClick={chooseFiles} disabled={isProcessing || isLoading}>{t("ファイルを追加", "Add Files")}</button><button className="secondary" onClick={() => setJobs((items) => items.map(({ outputBytes, outputWidth, outputHeight, message, outputPath, ...job }) => ({ ...job, status: "ready" })))} disabled={!jobs.length || isProcessing || isLoading}>{t("変換ステータスをクリア", "Clear Conversion Status")}</button><button className="primary" onClick={run} disabled={!jobs.length || isProcessing || isLoading}>{isLoading ? t("読込中…", "Loading…") : isProcessing ? t("処理中…", "Processing…") : t("変換を開始", "Start Conversion")}</button></div></div>
-        {jobs.length === 0 ? <button className="drop-zone" onClick={chooseFiles} disabled={isLoading}><strong>{t(`${supportedImageShortLabel}またはフォルダーをドロップ`, `Drop ${supportedImageShortLabel} or a folder`)}</strong><span>{t("またはクリックしてファイルを選択", "or click to choose files")}</span></button> : <><div className="table-header"><span>{t("ファイル", "File")}</span><span>{t("元の寸法", "Source Size")}</span><span>{t("出力寸法", "Output Size")}</span><span>{t("サイズ", "File Size")}</span><span>{t("状態", "Status")}</span><span></span></div><div className="rows">{jobs.map((job) => <div className="job-row" key={job.id}><div className="file"><Thumbnail path={job.path} alt={t(`${job.name} のプレビュー`, `Preview of ${job.name}`)} fallbackLabel={t("画像", "Image")} /><div><strong title={job.path}>{job.name}</strong><small>{job.message || job.path}</small></div></div><span>{dimensions(job.width, job.height)}</span><span>{dimensions(job.outputWidth, job.outputHeight)}</span><span>{formatBytes(job.originalBytes)}{job.outputBytes !== undefined && <small> → {formatBytes(job.outputBytes)}</small>}</span><span className={`badge ${job.status}`}>{label(job.status)}</span><div className="row-actions">{job.outputPath && <button title={t("エクスプローラーで出力ファイルを表示", "Show output file in File Explorer")} onClick={() => revealItemInDir(job.outputPath!)}>{t("開く", "Open")}</button>}<button title={t("リストから削除", "Remove from list")} onClick={() => setJobs((items) => items.filter((item) => item.id !== job.id))} disabled={job.status === "processing"}>×</button></div></div>)}</div><div className="queue-footer"><div className="footer-actions"><button onClick={() => setJobs([])} disabled={isProcessing || isLoading}>{t("リストをクリア", "Clear List")}</button></div><span>{t(`${jobs.filter((job) => job.status === "done").length} 件完了 / ${jobs.filter((job) => job.status === "failed").length} 件失敗`, `${jobs.filter((job) => job.status === "done").length} completed / ${jobs.filter((job) => job.status === "failed").length} failed`)}</span></div></>}
+        {jobs.length === 0 ? <button className="drop-zone" onClick={chooseFiles} disabled={isLoading}><strong>{t(`${supportedImageShortLabel}またはフォルダーをドロップ`, `Drop ${supportedImageShortLabel} or a folder`)}</strong></button> : <><div className="table-header"><span>{t("ファイル", "File")}</span><span>{t("元の寸法", "Source Size")}</span><span>{t("出力寸法", "Output Size")}</span><span>{t("サイズ", "File Size")}</span><span>{t("状態", "Status")}</span><span></span></div><div className="rows">{jobs.map((job) => <div className="job-row" key={job.id}><div className="file"><Thumbnail path={job.path} alt={t(`${job.name} のプレビュー`, `Preview of ${job.name}`)} fallbackLabel={t("画像", "Image")} /><div><strong title={job.path}>{job.name}</strong><small>{job.message || job.path}</small></div></div><span>{dimensions(job.width, job.height)}</span><span>{dimensions(job.outputWidth, job.outputHeight)}</span><span>{formatBytes(job.originalBytes)}{job.outputBytes !== undefined && <small> → {formatBytes(job.outputBytes)}</small>}</span><span className={`badge ${job.status}`}>{label(job.status)}</span><div className="row-actions">{job.outputPath && <button title={t("エクスプローラーで出力ファイルを表示", "Show output file in File Explorer")} onClick={() => revealItemInDir(job.outputPath!)}>{t("開く", "Open")}</button>}<button title={t("リストから削除", "Remove from list")} onClick={() => setJobs((items) => items.filter((item) => item.id !== job.id))} disabled={job.status === "processing"}>×</button></div></div>)}</div><div className="queue-footer"><div className="footer-actions"><button onClick={() => setJobs([])} disabled={isProcessing || isLoading}>{t("リストをクリア", "Clear List")}</button></div><span>{t(`${jobs.filter((job) => job.status === "done").length} 件完了 / ${jobs.filter((job) => job.status === "failed").length} 件失敗`, `${jobs.filter((job) => job.status === "done").length} completed / ${jobs.filter((job) => job.status === "failed").length} failed`)}</span></div></>}
       </section>
-    </section> : activeTab === "restore" ? <AiRestore /> : activeTab === "normal" ? <NormalMap /> : activeTab === "atlas" ? <TextureAtlas /> : <Suspense fallback={<section className="model-preview-empty"><div className="drop-zone"><strong>{t("3D表示を準備中…", "Preparing 3D preview…")}</strong></div></section>}><ModelPreview /></Suspense>}
+    </section></div>
+    <div className="tool-panel" hidden={activeTab !== "normal"}>{visitedTabs.has("normal") && <NormalMap />}</div>
+    <div className="tool-panel" hidden={activeTab !== "atlas"}>{visitedTabs.has("atlas") && <TextureAtlas />}</div>
+    <div className="tool-panel" hidden={activeTab !== "preview"}>{visitedTabs.has("preview") && <Suspense fallback={<section className="model-preview-empty"><div className="drop-zone"><strong>{t("3D表示を準備中…", "Preparing 3D preview…")}</strong></div></section>}><ModelPreview active={activeTab === "preview"} /></Suspense>}</div>
   </main>;
 }
 

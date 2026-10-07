@@ -1,6 +1,6 @@
 # Be Asset Optimizer プライバシーポリシー
 
-最終更新日: 2026年9月4日
+最終更新日: 2026年9月21日
 
 Be Asset Optimizer（以下「本アプリ」）は、画像および3Dアセットを利用者のPC内で処理するデスクトップアプリです。
 
@@ -14,13 +14,13 @@ Be Asset Optimizer（以下「本アプリ」）は、画像および3Dアセッ
 
 ## PC内に保存するデータ
 
-本アプリは、表示設定などのアプリ設定、処理結果、および利用者が任意で追加したAI復元コンポーネントをPC内に保存することがあります。生成ファイルの保存先は利用者が選択できます。AI復元コンポーネントはアプリ内の操作から削除できます。
+本アプリは表示設定などのアプリ設定と処理結果をPC内に保存します。生成ファイルの保存先は利用者が選択できます。
 
 ## ネットワーク通信
 
 通常の画像変換、ノーマルマップ生成、テクスチャアトラス作成および3Dプレビューはオフラインで実行されます。
 
-利用者が「AI機能を追加」を選択した場合に限り、本アプリはGitHub ReleaseからAI復元コンポーネントをダウンロードします。取得したファイルはSHA-256ハッシュで検証します。この通信では、GitHubのプライバシー規約に従ってIPアドレスなどの一般的な通信情報がGitHubにより処理される場合があります。本アプリの開発者がその通信情報を受領または保存することはありません。
+AI復元機能およびモデルのダウンロード機能はありません。サポートリンクを開く場合、外部サイトにはそのサイトのプライバシーポリシーが適用されます。
 
 ## 第三者への提供
 
@@ -28,7 +28,7 @@ Be Asset Optimizer（以下「本アプリ」）は、画像および3Dアセッ
 
 ## データの管理
 
-本アプリがPC内に保存した設定および追加コンポーネントは、アプリの機能またはWindowsのアンインストール機能を使用して削除できます。利用者が作成した変換結果は、利用者自身が通常のファイル操作で管理できます。
+利用者が作成した変換結果は、利用者自身が通常のファイル操作で管理できます。旧版で追加したAIコンポーネントは自動削除されません。
 
 ## 変更
 
@@ -42,7 +42,7 @@ Be Asset Optimizer（以下「本アプリ」）は、画像および3Dアセッ
 
 # Be Asset Optimizer Privacy Policy
 
-Last updated: September 4, 2026
+Last updated: September 21, 2026
 
 Be Asset Optimizer (the “App”) is a desktop application that processes images and 3D assets locally on the user's PC.
 
@@ -56,13 +56,13 @@ Images, FBX, GLB, and other files selected by the user are read only for local c
 
 ## Data stored on the PC
 
-The App may store application preferences, processing results, and optional AI restoration components on the user's PC. The user chooses where generated files are saved. Optional AI components can be removed from within the App.
+The App stores application preferences and processing results locally. The user chooses where generated files are saved.
 
 ## Network access
 
 Standard image conversion, normal-map generation, texture-atlas creation, and 3D preview run offline.
 
-Network access occurs only when the user selects “Add AI feature.” The App then downloads AI restoration components from GitHub Releases and verifies downloaded files using SHA-256 hashes. GitHub may process ordinary connection information such as the user's IP address under GitHub's own privacy terms. The App developer does not receive or retain that connection information.
+The App has no AI restoration or model download feature. External support websites have their own privacy policies.
 
 ## Sharing with third parties
 
@@ -70,7 +70,7 @@ Because the App does not collect personal information, the developer does not se
 
 ## Data control
 
-Users can remove locally stored settings and optional components through the App or Windows uninstall features. Users control generated files through normal file-management operations.
+Users manage generated files through normal file-management operations. AI components installed by older versions are not automatically removed.
 
 ## Changes
 

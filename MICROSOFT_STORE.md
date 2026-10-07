@@ -26,9 +26,9 @@ The package is written to:
 src-tauri/target/store/msix/output/
 ```
 
-The script performs a release build, prepares and verifies the open-source AI components, stages the Store assets and notices, creates the MSIX with the Windows SDK `MakeAppx.exe`, then unpacks it again to verify the Partner Center identity.
+The script performs a release build, stages the Store assets and notices, creates the MSIX with the Windows SDK `MakeAppx.exe`, then unpacks it again to verify the Partner Center identity.
 
-The Store build bundles the Real-ESRGAN executable and models so all executable code is covered by the Store package and AI restoration works without downloading executable code after installation. BOOTH and portable builds retain the smaller on-demand component behavior.
+AI restoration has been removed. Store, BOOTH, and portable builds do not include AI runtimes, models, or component downloads.
 
 ## Version mapping
 
@@ -51,9 +51,19 @@ This keeps Store versions increasing across the application's `0.x` to `1.x` tra
 - Privacy policy: <https://github.com/studio-juh/be-asset-optimizer/blob/master/PRIVACY.md>
 - Support: <https://github.com/studio-juh/be-asset-optimizer/issues>
 
-`runFullTrust` is required because Be Asset Optimizer is a Tauri/Win32 desktop application that processes files selected by the user, invokes the bundled local Real-ESRGAN executable for optional AI restoration, and opens generated files in Windows Explorer. It does not request elevation, install services or drivers, modify system settings, or upload user files.
+`runFullTrust` is required because Be Asset Optimizer is a Tauri/Win32 desktop application that processes files selected by the user, and opens generated files in Windows Explorer. It does not request elevation, install services or drivers, modify system settings, or upload user files.
 
 ## Before submission
+
+AI restoration was removed after the 2026-09-09 certification report. The current
+app does not load AI models or generate content using AI. Normal maps are computed
+from image brightness gradients without machine learning.
+
+Before resubmitting, increment the app/package version, replace the old Store
+screenshots and remove AI restoration from both localized Store descriptions.
+Historical 0.6.1 screenshots are archived in `store/archive/0.6.1/screenshots` and
+must not be used for the new submission. Partner Center has not been updated by
+these source changes.
 
 1. Run `npm run package:store` on a clean release checkout.
 2. Test the package on a separate Windows user or virtual machine using a development certificate whose subject exactly matches the Partner Center publisher.

@@ -90,7 +90,6 @@ $packageJson = Get-Content -LiteralPath (Join-Path $repositoryRoot "package.json
 $appVersion = [string]$packageJson.version
 $storeVersion = Convert-ToStoreVersion -AppVersion $appVersion
 $applicationExe = Join-Path $tauriRoot "target\release\be-asset-optimizer.exe"
-$aiRoot = Join-Path $tauriRoot "resources\realesrgan"
 $manifestTemplate = Join-Path $repositoryRoot "store\AppxManifest.xml.template"
 $iconRoot = Join-Path $tauriRoot "icons"
 $makeAppx = Get-MakeAppxPath
@@ -113,45 +112,19 @@ if (-not (Test-Path -LiteralPath $applicationExe -PathType Leaf)) {
     throw "Application executable not found: $applicationExe"
 }
 
-Write-Host "Preparing Store-bundled AI components..."
-& (Join-Path $PSScriptRoot "prepare-ai-models.ps1")
-if ($LASTEXITCODE -ne 0) {
-    throw "AI component preparation failed with exit code $LASTEXITCODE."
-}
-
 Reset-Directory -Path $stageRoot
-Reset-Directory -Path $outputRoot
+New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
 Reset-Directory -Path $verifyRoot
 
 $assetRoot = Join-Path $stageRoot "Assets"
-$resourceTarget = Join-Path $stageRoot "resources\realesrgan"
 $noticeRoot = Join-Path $stageRoot "notices"
-New-Item -ItemType Directory -Path $assetRoot, $resourceTarget, $noticeRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $assetRoot, $noticeRoot -Force | Out-Null
 
 Copy-Item -LiteralPath $applicationExe -Destination (Join-Path $stageRoot "be-asset-optimizer.exe")
 Copy-Item -LiteralPath (Join-Path $iconRoot "StoreLogo.png") -Destination $assetRoot
 Copy-Item -LiteralPath (Join-Path $iconRoot "Square44x44Logo.png") -Destination $assetRoot
 Copy-Item -LiteralPath (Join-Path $iconRoot "Square71x71Logo.png") -Destination $assetRoot
 Copy-Item -LiteralPath (Join-Path $iconRoot "Square150x150Logo.png") -Destination $assetRoot
-$normalizedAiRoot = [System.IO.Path]::GetFullPath($aiRoot).TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
-Get-ChildItem -LiteralPath $aiRoot -Recurse -File | ForEach-Object {
-    $fullSourcePath = [System.IO.Path]::GetFullPath($_.FullName)
-    if (-not $fullSourcePath.StartsWith($normalizedAiRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "AI component path escaped the expected resource directory: $fullSourcePath"
-    }
-    $relativePath = $fullSourcePath.Substring($normalizedAiRoot.Length)
-    $destination = Join-Path $resourceTarget $relativePath
-    New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
-    Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
-}
-
-$aiManifest = Get-Content -LiteralPath (Join-Path $resourceTarget "component.json") -Raw | ConvertFrom-Json
-foreach ($file in $aiManifest.files) {
-    $stagedFile = Join-Path $resourceTarget ([string]$file.path)
-    if (-not (Test-Path -LiteralPath $stagedFile -PathType Leaf)) {
-        throw "Required AI component was not staged: $($file.path)"
-    }
-}
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "LICENSE") -Destination $noticeRoot
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "PRIVACY.md") -Destination $noticeRoot
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "THIRD_PARTY_NOTICES.md") -Destination $noticeRoot

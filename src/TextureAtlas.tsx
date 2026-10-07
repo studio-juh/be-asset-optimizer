@@ -1,166 +1,141 @@
-import { DragEvent, useEffect, useMemo, useRef, useState } from "react";
+import { DragEvent, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { InspectProgress, InspectResult, supportedImageFilter, supportedImageShortLabel } from "./imageFiles";
+import { InspectProgress, InspectResult, supportedImageFilter } from "./imageFiles";
 import { localizedDetail, t } from "./i18n";
+import { addTextures, AtlasSlot, emptyAtlas, splitSlot, Texture, ResolutionWarning, resolutionWarnings } from "./atlasLayout";
 
-type Texture = { path: string; name: string; originalBytes: number; width: number; height: number };
 type AtlasResult = { outputPath: string; outputBytes: number; width: number; height: number };
-type NativeAtlasDrag = { type: "enter" | "drop"; paths: string[]; position: { x: number; y: number } } | { type: "over"; position: { x: number; y: number } } | { type: "leave" };
+type NativeDrag = { type: "enter" | "drop"; paths: string[]; position: { x: number; y: number } } | { type: "over"; position: { x: number; y: number } } | { type: "leave" };
+const dragType = "application/x-smartpng-atlas-slot";
 
-const slots = [t("左上", "Top Left"), t("右上", "Top Right"), t("左下", "Bottom Left"), t("右下", "Bottom Right")];
-const emptyTextures = (): Array<Texture | undefined> => [undefined, undefined, undefined, undefined];
-const formatBytes = (bytes: number) => bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(2)} MB`;
-
-function AtlasTile({ slot, texture, index, disabled, highlighted, onMove, onRemove, onAdd, onInternalDragStart, onInternalDragOver, onInternalDragEnd, onInternalDrop }: { slot: string; texture?: Texture; index: number; disabled: boolean; highlighted: boolean; onMove: (direction: -1 | 1) => void; onRemove: () => void; onAdd: () => void; onInternalDragStart: () => void; onInternalDragOver: () => void; onInternalDragEnd: () => void; onInternalDrop: (source: number) => void }) {
+function Tile({ slot, warning, disabled, highlighted, onAdd, onRemove, onSplit, onSwap, onHighlight }: {
+  slot: AtlasSlot; disabled: boolean; highlighted: boolean;
+  warning?: ResolutionWarning;
+  onAdd: () => void; onRemove: () => void; onSplit: () => void; onSwap: (source: string) => void; onHighlight: (id?: string) => void;
+}) {
   const [preview, setPreview] = useState<string>();
-
+  const warningText = warning && slot.texture ? t(
+    `解像度不足：元画像 ${slot.texture.width} × ${slot.texture.height} px／配置枠 ${warning.width} × ${warning.height} px。縦横比を維持して枠に合わせるには約${warning.scale.toFixed(2)}倍の拡大が必要です。現在は拡大せず、原寸で中央配置します。`,
+    `Low resolution: source ${slot.texture.width} × ${slot.texture.height} px / slot ${warning.width} × ${warning.height} px. Fitting with the original aspect ratio requires approximately ${warning.scale.toFixed(2)}× upscaling. Currently centered at original size without upscaling.`,
+  ) : undefined;
   useEffect(() => {
-    let active = true;
-    setPreview(undefined);
-    if (texture) void invoke<string>("create_preview", { path: texture.path, size: 512 }).then((data) => { if (active) setPreview(data); }).catch(() => {});
+    let active = true; setPreview(undefined);
+    if (slot.texture) void invoke<string>("create_preview", { path: slot.texture.path, size: 256 }).then(data => { if (active) setPreview(data); }).catch(() => {});
     return () => { active = false; };
-  }, [texture?.path]);
-
-  const acceptInternalDrop = (event: DragEvent<HTMLDivElement>) => {
-    if (!event.dataTransfer.types.includes("application/x-smartpng-atlas-index")) return;
-    event.preventDefault();
-    onInternalDragOver();
+  }, [slot.texture?.path]);
+  const start = (event: DragEvent) => {
+    if (disabled) { event.preventDefault(); return; }
+    event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData(dragType, slot.id); onHighlight(slot.id);
   };
-  const dropInternal = (event: DragEvent<HTMLDivElement>) => {
-    const source = Number(event.dataTransfer.getData("application/x-smartpng-atlas-index"));
-    if (Number.isInteger(source)) { event.preventDefault(); onInternalDrop(source); }
-  };
-  const startInternalDrag = (event: DragEvent<HTMLDivElement>) => {
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("application/x-smartpng-atlas-index", String(index));
-    onInternalDragStart();
-  };
-
-  return <div data-atlas-index={index} className={`atlas-slot ${texture ? "filled" : ""} ${highlighted ? "drop-target" : ""}`} onDragOver={acceptInternalDrop} onDrop={dropInternal}>
-    <div className="atlas-tile-bar"><strong>{slot}</strong>{texture && <div className="atlas-actions"><button title={t("前の枠と入れ替え", "Swap with previous slot")} onClick={() => onMove(-1)} disabled={disabled || index === 0}>←</button><button title={t("次の枠と入れ替え", "Swap with next slot")} onClick={() => onMove(1)} disabled={disabled || index === 3}>→</button><button title={t("この画像を外す", "Remove this image")} onClick={onRemove} disabled={disabled}>×</button></div>}</div>
-    {texture ? <><div className="atlas-tile-preview" draggable={!disabled} onDragStart={startInternalDrag} onDragEnd={onInternalDragEnd}>{preview ? <img src={preview} alt={`${slot}: ${texture.name}`} draggable={false} /> : <span>{t("読込中…", "Loading…")}</span>}</div><div className="atlas-tile-caption" title={texture.path}><strong>{texture.name}</strong><small>{texture.width} × {texture.height}</small></div></> : <button className="atlas-empty" onClick={onAdd} disabled={disabled}><strong>{t("ここへ画像をドロップ", "Drop an image here")}</strong><small>{t("主要な静止画形式", "Common still-image formats")}</small></button>}
+  return <div data-atlas-slot={slot.id} className={`atlas-slot ${slot.size === 1 ? "atlas-small" : ""} ${slot.texture ? "filled" : ""} ${highlighted ? "drop-target" : ""}`}
+    style={{ gridColumn: `${slot.x + 1} / span ${slot.size}`, gridRow: `${slot.y + 1} / span ${slot.size}` }}
+    onDragOver={event => { if (!disabled && event.dataTransfer.types.includes(dragType)) { event.preventDefault(); onHighlight(slot.id); } }}
+    onDrop={event => { if (!disabled && event.dataTransfer.types.includes(dragType)) { event.preventDefault(); onSwap(event.dataTransfer.getData(dragType)); onHighlight(); } }}>
+    <div className="atlas-tile-bar"><strong>{slot.id.split(".").map(n => Number(n) + 1).join(".")}</strong><div className="atlas-actions">
+      {slot.size === 2 && <button title={t("この枠を4分割（画像は左上へ移動）", "Split slot into four (image moves to top left)")} onClick={onSplit} disabled={disabled}>⊞</button>}
+      {slot.texture && <button title={t("画像を外す", "Remove image")} onClick={onRemove} disabled={disabled}>×</button>}
+    </div></div>
+    {slot.texture ? <><div className="atlas-tile-preview" draggable={!disabled} onDragStart={start} onDragEnd={() => onHighlight()}>
+      {preview ? <img src={preview} alt={slot.texture.name} draggable={false} /> : <span>{t("読込中…", "Loading…")}</span>}
+      {warningText && <span className="atlas-resolution-warning" title={warningText} aria-label={warningText} tabIndex={0}>⚠ {t("解像度不足", "Low resolution")}</span>}
+    </div><div className="atlas-tile-caption" title={`${slot.texture.path}\n${slot.texture.width} × ${slot.texture.height}`}><strong>{slot.texture.name}</strong></div></>
+      : <button className="atlas-empty atlas-black" onClick={onAdd} disabled={disabled} title={t("画像を追加（空き枠は黒で出力）", "Add image (empty slots export as black)")}><strong>＋</strong><small>{t("黒", "Black")}</small></button>}
   </div>;
 }
 
 export default function TextureAtlas() {
-  const [textures, setTextures] = useState<Array<Texture | undefined>>(emptyTextures);
+  const [slots, setSlots] = useState(emptyAtlas);
+  const slotsRef = useRef(slots);
   const [outputDir, setOutputDir] = useState("");
-  const [padToSquare, setPadToSquare] = useState(true);
-  const [squareResolution, setSquareResolution] = useState("");
-  const [customSquareResolution, setCustomSquareResolution] = useState("");
+  const [square, setSquare] = useState(true);
+  const [resolution, setResolution] = useState("");
+  const [custom, setCustom] = useState("");
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const requestRef = useRef("");
+  const alive = useRef(true);
   const [result, setResult] = useState<AtlasResult>();
-  const [isCreating, setIsCreating] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const loadingRequestId = useRef("");
-  const [dropTarget, setDropTarget] = useState<number>();
-  const [notice, setNotice] = useState(t(`${supportedImageShortLabel}を任意の枠へドロップしてください。`, `Drop ${supportedImageShortLabel} into any slot.`));
-  const textureCount = useMemo(() => textures.filter(Boolean).length, [textures]);
-
-  const addPaths = async (paths: string[], targetIndex?: number) => {
-    if (!paths.length) return;
-    if (loadingRequestId.current) { setNotice(t("現在の画像を読み込み中です", "Images are already being loaded")); return; }
-    const requestId = crypto.randomUUID();
-    loadingRequestId.current = requestId;
-    setIsLoading(true);
+  const [target, setTarget] = useState<string>();
+  const [notice, setNotice] = useState(t("画像を任意の枠へドロップしてください。空き枠は黒で埋めます。", "Drop images into any slot. Empty slots will be black."));
+  const count = slots.filter(slot => slot.texture).length;
+  const selectedResolution = resolution === "custom" ? (custom.trim() ? Number(custom) : NaN) : resolution ? Number(resolution) : null;
+  const warnings = resolutionWarnings(slots, square, selectedResolution);
+  const commit = (next: AtlasSlot[]) => { slotsRef.current = next; setSlots(next); setResult(undefined); };
+  const lock = (value: boolean) => { busyRef.current = value; if (alive.current) setBusy(value); };
+  const addPaths = async (paths: string[], id?: string) => {
+    if (!paths.length || busyRef.current) return;
+    lock(true); const requestId = crypto.randomUUID(); requestRef.current = requestId;
     setNotice(t("画像を確認しています…", "Inspecting images…"));
     try {
-      const result = await invoke<InspectResult<Texture>>("inspect_files", { paths, requestId, maxFiles: 4 });
-      setTextures((current) => {
-        const next = [...current];
-        let added = 0;
-        for (const file of result.files) {
-          const duplicateIndex = next.findIndex((item) => item?.path.toLowerCase() === file.path.toLowerCase());
-          if (duplicateIndex >= 0) next[duplicateIndex] = undefined;
-          const destination = added === 0 && targetIndex !== undefined ? targetIndex : next.findIndex((item) => !item);
-          if (destination < 0) continue;
-          next[destination] = file;
-          added += 1;
-        }
-        const count = next.filter(Boolean).length;
-        if (added) setNotice(t(`${count} / 4 枚を登録しました${result.failures.length ? `（${result.failures.length} 枚は読込失敗）` : ""}`, `Added ${count} / 4 images${result.failures.length ? ` (${result.failures.length} failed)` : ""}`));
-        else if (result.failures.length) setNotice(t(`読み込めませんでした: ${result.failures[0].message}`, `Could not load the selected image: ${localizedDetail(result.failures[0].message, "The file could not be inspected")}`));
-        else setNotice(t("追加できる空き枠がないか、対象画像がありません", "No empty slot or supported image is available"));
-        return next;
-      });
-      setResult(undefined);
-    } catch (error) { setNotice(t(`追加できませんでした: ${String(error)}`, `Could not add images: ${localizedDetail(error, "The operation failed")}`)); }
-    finally {
-      if (loadingRequestId.current === requestId) loadingRequestId.current = "";
-      setIsLoading(false);
-    }
+      const inspected = await invoke<InspectResult<Texture>>("inspect_files", { paths, requestId, maxFiles: 17 });
+      if (!alive.current) return;
+      const added = addTextures(slotsRef.current, inspected.files, id);
+      commit(added.slots);
+      setNotice(t(`${added.added} 枚を追加。未追加 ${inspected.files.length - added.added} 枚、読込失敗 ${inspected.failures.length} 件（最大16枚）。`, `${added.added} added; ${inspected.files.length - added.added} not added, ${inspected.failures.length} failed (maximum 16 images).`));
+    } catch (error) { if (alive.current) setNotice(localizedDetail(error, "Could not add images")); }
+    finally { requestRef.current = ""; lock(false); }
   };
-
-  const atlasIndexAt = (position: { x: number; y: number }) => {
-    const ratio = window.devicePixelRatio || 1;
-    const element = document.elementFromPoint(position.x / ratio, position.y / ratio);
-    const slot = element?.closest<HTMLElement>("[data-atlas-index]");
-    const index = Number(slot?.dataset.atlasIndex);
-    return Number.isInteger(index) && index >= 0 && index < 4 ? index : undefined;
-  };
-
-  useEffect(() => {
-    const offInspect = listen<InspectProgress<Texture>>("inspect-files-progress", (event) => {
-      const update = event.payload;
-      if (update.requestId === loadingRequestId.current) setNotice(t(`${update.completed} / ${update.total} 枚を読み込んでいます…`, `Loading ${update.completed} / ${update.total}…`));
-    });
-    const onNativeDrag = (event: Event) => {
-      const detail = (event as CustomEvent<NativeAtlasDrag>).detail;
-      if (detail.type === "leave") { setDropTarget(undefined); return; }
-      const target = atlasIndexAt(detail.position);
-      setDropTarget(target);
-      if (detail.type === "drop") { setDropTarget(undefined); void addPaths(detail.paths, target); }
-    };
-    const onMenuOpen = () => { void chooseFiles(); };
-    window.addEventListener("smartpng-atlas-drag", onNativeDrag);
-    window.addEventListener("smartpng-menu-open", onMenuOpen);
-    return () => { void offInspect.then((off) => off()); window.removeEventListener("smartpng-atlas-drag", onNativeDrag); window.removeEventListener("smartpng-menu-open", onMenuOpen); };
-  }, []);
-
-  const chooseFiles = async () => {
+  const chooseFiles = async (id?: string) => {
+    if (busyRef.current) return;
     const selected = await open({ multiple: true, filters: [supportedImageFilter] });
-    if (selected) await addPaths(Array.isArray(selected) ? selected : [selected]);
+    if (selected && alive.current) await addPaths(Array.isArray(selected) ? selected : [selected], id);
   };
-  const chooseOutput = async () => {
-    const selected = await open({ directory: true, multiple: false, title: t("出力先フォルダを選択", "Choose output folder") });
-    if (typeof selected === "string") setOutputDir(selected);
+  const handlers = useRef({ addPaths, chooseFiles }); handlers.current = { addPaths, chooseFiles };
+  useEffect(() => {
+    alive.current = true;
+    const off = listen<InspectProgress<Texture>>("inspect-files-progress", event => {
+      if (alive.current && event.payload.requestId === requestRef.current) setNotice(t(`${event.payload.completed} / ${event.payload.total} 枚を読込中…`, `Loading ${event.payload.completed} / ${event.payload.total}…`));
+    });
+    const onDrag = (event: Event) => {
+      const detail = (event as CustomEvent<NativeDrag>).detail;
+      if (detail.type === "leave" || busyRef.current) { setTarget(undefined); return; }
+      const ratio = window.devicePixelRatio || 1;
+      const id = document.elementFromPoint(detail.position.x / ratio, detail.position.y / ratio)?.closest<HTMLElement>("[data-atlas-slot]")?.dataset.atlasSlot;
+      setTarget(id);
+      if (detail.type === "drop") { setTarget(undefined); void handlers.current.addPaths(detail.paths, id); }
+    };
+    const onOpen = () => { void handlers.current.chooseFiles(); };
+    window.addEventListener("smartpng-atlas-drag", onDrag); window.addEventListener("smartpng-atlas-menu-open", onOpen);
+    return () => { alive.current = false; void off.then(stop => stop()).catch(() => {}); window.removeEventListener("smartpng-atlas-drag", onDrag); window.removeEventListener("smartpng-atlas-menu-open", onOpen); };
+  }, []);
+  const swap = (source: string, destination: string) => {
+    if (busyRef.current || source === destination) return;
+    const current = slotsRef.current;
+    const a = current.find(slot => slot.id === source), b = current.find(slot => slot.id === destination);
+    if (!a || !b) return;
+    commit(current.map(slot => slot.id === source ? { ...slot, texture: b.texture } : slot.id === destination ? { ...slot, texture: a.texture } : slot));
   };
-  const swap = (source: number, target: number) => setTextures((items) => {
-    if (source === target || target < 0 || target > 3) return items;
-    const copy = [...items];
-    [copy[source], copy[target]] = [copy[target], copy[source]];
-    setResult(undefined);
-    return copy;
-  });
   const create = async () => {
-    const complete = textures.every((texture): texture is Texture => Boolean(texture));
-    if (!complete || isCreating) { setNotice(t("4つの枠すべてに画像を指定してください", "Add an image to all four slots")); return; }
-    setIsCreating(true); setResult(undefined); setNotice(t("アトラスを作成しています…", "Creating texture atlas…"));
+    if (busyRef.current || !count) return;
+    const value = resolution === "custom" ? custom : resolution;
+    const numeric = value === "" ? null : Number(value);
+    if (square && ((resolution === "custom" && !value) || (numeric !== null && (!Number.isInteger(numeric) || numeric < 16 || numeric > 4096)))) {
+      setNotice(t("1大枠の解像度を16〜4096 pxで指定してください", "Enter a large-slot resolution between 16 and 4096 px")); return;
+    }
+    lock(true); setResult(undefined); setNotice(t("アトラスを作成しています…", "Creating atlas…"));
     try {
-      const created = await invoke<AtlasResult>("create_texture_atlas", { paths: textures.map((item) => item.path), settings: { outputDir: outputDir || null, padToSquare, squareResolution: padToSquare ? numberOrNull(squareResolution === "custom" ? customSquareResolution : squareResolution) : null } });
-      setResult(created); setNotice(t("テクスチャアトラスを作成しました", "Texture atlas created"));
-    } catch (error) { setNotice(t(`作成できませんでした: ${String(error)}`, `Could not create the atlas: ${localizedDetail(error, "The operation failed")}`)); }
-    finally { setIsCreating(false); }
+      const created = await invoke<AtlasResult>("create_texture_atlas", { slots: slotsRef.current.map(slot => ({ x: slot.x, y: slot.y, size: slot.size, path: slot.texture?.path ?? null })), settings: { outputDir: outputDir || null, padToSquare: square, squareResolution: square ? numeric : null } });
+      if (alive.current) { setResult(created); setNotice(t("テクスチャアトラスを作成しました", "Texture atlas created")); }
+    } catch (error) { if (alive.current) setNotice(localizedDetail(error, "Could not create atlas. Try a smaller slot resolution.")); }
+    finally { lock(false); }
   };
-
   return <section className="workspace">
-    <aside className="settings atlas-settings">
-      <h2>{t("アトラス設定", "Atlas Settings")}</h2>
-      <label>{t("出力先", "Output folder")}<div className="path-row"><input value={outputDir} onChange={(event) => setOutputDir(event.target.value)} placeholder={t("1枚目の入力元 / atlas", "First source folder / atlas")} /><button onClick={chooseOutput}>{t("選択", "Choose")}</button></div></label>
-      <fieldset><legend>{t("配置", "Layout")}</legend><label className="checkbox"><input type="checkbox" checked={padToSquare} onChange={(event) => { setPadToSquare(event.target.checked); setResult(undefined); }} />{t("各画像を正方形として補完", "Pad each image to a square")}</label>{padToSquare && <label>{t("1枠の解像度", "Resolution per slot")}<select value={squareResolution} onChange={(event) => { setSquareResolution(event.target.value); setResult(undefined); }}><option value="">{t("自動", "Automatic")}</option><option value="256">256 × 256</option><option value="512">512 × 512</option><option value="1024">1024 × 1024</option><option value="2048">2048 × 2048</option><option value="4096">4096 × 4096</option><option value="custom">Custom…</option></select>{squareResolution === "custom" && <input inputMode="numeric" value={customSquareResolution} onChange={(event) => { setCustomSquareResolution(event.target.value); setResult(undefined); }} placeholder="16–4096 px" />}</label>}<p className="mode-note">{padToSquare ? squareResolution ? t("最終アトラスは指定値の2倍です。大きい画像だけ縮小し、小さい画像は拡大せず透明余白で補完します。", "The final atlas is twice the selected resolution. Large images are reduced; small images are padded with transparency without upscaling.") : t("縦長・横長画像は、引き伸ばさず中央へ配置し、足りない部分を透明で埋めます。", "Portrait and landscape images are centered without stretching, with transparent padding.") : t("画像比率に合わせた長方形セルで配置します。", "Uses rectangular cells that follow the image aspect ratios.")}</p><p className="mode-note">{t("外部画像は好きな枠へ直接ドロップできます。登録後の画像をドラッグすると、枠同士を入れ替えられます。", "Drop external images directly into any slot. Drag added images to swap slots.")}</p></fieldset>
-      <p className="hint">{t("4枚を2×2アトラスへ結合します。元の画像は変更しません。", "Combines four images into a 2×2 atlas. Source images are never modified.")}</p>
+    <aside className="settings atlas-settings"><h2>{t("アトラス設定", "Atlas Settings")}</h2>
+      <label>{t("出力先", "Output folder")}<div className="path-row"><input disabled={busy} value={outputDir} onChange={event => setOutputDir(event.target.value)} placeholder={t("最初の画像のフォルダー / atlas", "First image folder / atlas")} /><button disabled={busy} onClick={async () => { const dir = await open({ directory: true, multiple: false }); if (typeof dir === "string") setOutputDir(dir); }}>{t("選択", "Choose")}</button></div></label>
+      <fieldset disabled={busy}><legend>{t("配置", "Layout")}</legend>
+        <div className="actions atlas-layout-actions"><button type="button" onClick={() => { let next = slotsRef.current; for (const slot of [...next]) if (slot.size === 2) next = splitSlot(next, slot.id); commit(next); }}>{t("全枠を4分割（4×4）", "Split all slots (4×4)")}</button></div>
+        <label className="checkbox"><input type="checkbox" checked={square} onChange={event => { setSquare(event.target.checked); setResult(undefined); }} />{t("各画像を正方形として補完", "Pad images to square cells")}</label>
+        {square && <label>{t("1大枠の解像度", "Resolution per large slot")}<select value={resolution} onChange={event => { setResolution(event.target.value); setResult(undefined); }}><option value="">{t("自動", "Automatic")}</option>{[256,512,1024,2048,4096].map(size => <option key={size} value={size}>{size} × {size}</option>)}<option value="custom">Custom…</option></select>{resolution === "custom" && <input inputMode="numeric" value={custom} onChange={event => { setCustom(event.target.value); setResult(undefined); }} placeholder="16–4096 px" />}</label>}
+      </fieldset>
     </aside>
-    <section className="queue">
-      <div className="queue-toolbar"><div><h2>{t("テクスチャアトラス", "Texture Atlas")} <span>{textureCount} / 4</span></h2><p>{result ? `${result.width} × ${result.height} · ${formatBytes(result.outputBytes)}` : notice}</p></div><div className="actions"><button className="secondary" onClick={chooseFiles} disabled={isCreating || isLoading || textureCount === 4}>{t("画像を追加", "Add Images")}</button><button className="primary" onClick={create} disabled={textureCount !== 4 || isCreating || isLoading}>{isLoading ? t("読込中…", "Loading…") : isCreating ? t("作成中…", "Creating…") : t("アトラスを作成", "Create Atlas")}</button></div></div>
-      <div className="atlas-grid">{slots.map((slot, index) => <AtlasTile key={slot} slot={slot} texture={textures[index]} index={index} disabled={isCreating || isLoading} highlighted={dropTarget === index} onMove={(direction) => swap(index, index + direction)} onRemove={() => { setTextures((items) => items.map((item, itemIndex) => itemIndex === index ? undefined : item)); setResult(undefined); }} onAdd={chooseFiles} onInternalDragStart={() => setDropTarget(index)} onInternalDragOver={() => setDropTarget(index)} onInternalDragEnd={() => setDropTarget(undefined)} onInternalDrop={(source) => { swap(source, index); setDropTarget(undefined); }} />)}</div>
-      <div className="queue-footer"><div className="footer-actions"><button onClick={() => { setTextures(emptyTextures()); setResult(undefined); setNotice(t(`${supportedImageShortLabel}を任意の枠へドロップしてください`, `Drop ${supportedImageShortLabel} into any slot`)); }} disabled={isCreating || textureCount === 0}>{t("リストをクリア", "Clear List")}</button>{result && <button onClick={() => revealItemInDir(result.outputPath)}>{t("出力を開く", "Open Output")}</button>}</div><span>{notice}</span></div>
+    <section className="queue"><div className="queue-toolbar"><div><h2>{t("テクスチャアトラス", "Texture Atlas")} <span>{count} / {slots.length}</span></h2><p>{result ? `${result.width} × ${result.height} · ${(result.outputBytes / 1024 / 1024).toFixed(2)} MB` : notice}</p></div><div className="actions"><button className="secondary" onClick={() => void chooseFiles()} disabled={busy || count === 16}>{t("画像を追加", "Add Images")}</button><button className="primary" onClick={create} disabled={busy || !count}>{busy ? t("処理中…", "Processing…") : t("アトラスを作成", "Create Atlas")}</button></div></div>
+      <div className="atlas-grid atlas-flexible">{slots.map(slot => <Tile key={slot.id} slot={slot} warning={warnings.get(slot.id)} disabled={busy} highlighted={target === slot.id}
+        onAdd={() => void chooseFiles(slot.id)} onRemove={() => { if (!busyRef.current) commit(slotsRef.current.map(item => item.id === slot.id ? { ...item, texture: undefined } : item)); }}
+        onSplit={() => { if (!busyRef.current) commit(splitSlot(slotsRef.current, slot.id)); }} onSwap={source => swap(source, slot.id)} onHighlight={setTarget} />)}</div>
+      <div className="queue-footer"><div className="footer-actions"><button disabled={busy} onClick={() => { commit(emptyAtlas()); setNotice(t("配置を2×2へ戻しました", "Reset to 2×2 layout")); }}>{t("クリアして2×2へ戻す", "Clear and reset to 2×2")}</button>{result && <button onClick={() => revealItemInDir(result.outputPath)}>{t("出力を開く", "Open Output")}</button>}</div><span>{t("空き枠は黒", "Empty slots are black")}</span></div>
     </section>
   </section>;
-}
-
-function numberOrNull(value: string) {
-  const number = Number(value);
-  return Number.isInteger(number) && number > 0 ? number : null;
 }

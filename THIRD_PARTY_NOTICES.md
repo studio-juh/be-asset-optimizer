@@ -10,10 +10,6 @@ application is redistributed.
 - React — MIT
 - webp — MIT OR Apache-2.0; bundled libwebp — BSD-3-Clause
 - heif-oxide and rust_h265 — MIT OR Apache-2.0; pure-Rust HEIC/HEIF decoding
-- Real-ESRGAN model — BSD-3-Clause
-- Real-ESRGAN-ncnn-vulkan — MIT; the bundled portable runtime also uses ncnn
-  and other permissively licensed components documented by the upstream project.
-  License texts are included beside the AI runtime in the application resources.
 - image, png, bytemuck, serde — permissive open-source licenses; see their
   respective package manifests for full notices.
 
