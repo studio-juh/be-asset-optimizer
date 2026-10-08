@@ -6,6 +6,7 @@ use atlas::AtlasSlot;
 use std::{
   collections::{HashMap, HashSet},
   fs,
+  io::Write,
   path::{Path, PathBuf},
   sync::{Condvar, Mutex, OnceLock},
   time::SystemTime,
@@ -51,6 +52,7 @@ enum Status { Processing, Done, Skipped, Failed }
 
 #[derive(Debug, Serialize, Clone)]
 struct Progress { path: String, status: Status, output_bytes: Option<u64>, output_width: Option<u32>, output_height: Option<u32>, message: Option<String>, output_path: Option<String> }
+type ConversionResult = (Status, Option<u64>, u32, u32, Option<String>, Option<String>);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -232,10 +234,10 @@ async fn process_batch(app: AppHandle, paths: Vec<String>, settings: Settings) -
   tauri::async_runtime::spawn_blocking(move || {
     for path in paths {
       let path_buf = PathBuf::from(&path);
-      emit(&app, &path, Status::Processing, None, None, None, Some("変換中".into()), None);
+      emit(&app, "job-progress", &path, (Status::Processing, None, None, None, Some("変換中".into()), None));
       match process_file(&path_buf, &settings) {
-        Ok(result) => emit(&app, &path, result.0, result.1, Some(result.2), Some(result.3), result.4, result.5),
-        Err(error) => emit(&app, &path, Status::Failed, None, None, None, Some(error), None),
+        Ok(result) => emit(&app, "job-progress", &path, (result.0, result.1, Some(result.2), Some(result.3), result.4, result.5)),
+        Err(error) => emit(&app, "job-progress", &path, (Status::Failed, None, None, None, Some(error), None)),
       }
     }
   }).await.map_err(|error| error.to_string())?;
@@ -247,10 +249,10 @@ async fn process_normal_batch(app: AppHandle, paths: Vec<String>, settings: Norm
   tauri::async_runtime::spawn_blocking(move || {
     for path in paths {
       let path_buf = PathBuf::from(&path);
-      emit_normal(&app, &path, Status::Processing, None, None, None, Some("ノーマルマップを生成中".into()), None);
+      emit(&app, "normal-job-progress", &path, (Status::Processing, None, None, None, Some("ノーマルマップを生成中".into()), None));
       match process_normal_file(&path_buf, &settings) {
-        Ok(result) => emit_normal(&app, &path, result.0, result.1, Some(result.2), Some(result.3), result.4, result.5),
-        Err(error) => emit_normal(&app, &path, Status::Failed, None, None, None, Some(error), None),
+        Ok(result) => emit(&app, "normal-job-progress", &path, (result.0, result.1, Some(result.2), Some(result.3), result.4, result.5)),
+        Err(error) => emit(&app, "normal-job-progress", &path, (Status::Failed, None, None, None, Some(error), None)),
       }
     }
   }).await.map_err(|error| error.to_string())?;
@@ -261,36 +263,36 @@ async fn process_normal_batch(app: AppHandle, paths: Vec<String>, settings: Norm
 async fn create_texture_atlas(slots: Vec<AtlasSlot>, settings: AtlasSettings) -> Result<AtlasResult, String> {
   tauri::async_runtime::spawn_blocking(move || {
     atlas::validate(&slots)?;
-    let mut images = Vec::with_capacity(slots.len());
+    let mut dimensions = Vec::with_capacity(slots.len());
     for slot in &slots {
-      images.push(if let Some(path) = &slot.path {
+      dimensions.push(if let Some(path) = &slot.path {
         let path = PathBuf::from(path);
         if !is_supported_image(&path) { return Err("対応している画像ファイルを指定してください".into()); }
-        Some(load_input_image(&path)?.to_rgba8())
+        Some(input_dimensions(&path)?)
       } else { None });
     }
-    let atlas = atlas::render_with_padding(&slots, &images, settings.pad_to_square, settings.square_resolution, settings.padding)?;
+    let atlas = atlas::render_streaming(&slots, &dimensions, settings.pad_to_square, settings.square_resolution, settings.padding, |index| {
+      let path = slots[index].path.as_ref().ok_or("画像が指定されていません")?;
+      Ok(load_input_image(Path::new(path))?.into_rgba8())
+    })?;
     let (width, height) = atlas.dimensions();
     let encoded = encode_rgba(&atlas, width, height)?;
     let optimized = oxipng::optimize_from_memory(&encoded, &lossless_options(1)).map_err(|error| error.to_string())?;
     let first_path = PathBuf::from(slots.iter().find_map(|slot| slot.path.as_ref()).ok_or("画像を1枚以上指定してください")?);
     let output_dir = if let Some(dir) = settings.output_dir.as_deref().filter(|value| !value.trim().is_empty()) { PathBuf::from(dir) } else { first_path.parent().ok_or("入力元フォルダを取得できません")?.join("atlas") };
     fs::create_dir_all(&output_dir).map_err(|error| error.to_string())?;
-    let output_path = unique_named_output_path(&output_dir, "texture", "atlas");
-    fs::write(&output_path, optimized.as_slice()).map_err(|error| error.to_string())?;
+    let output_path = write_unique_output(&output_dir, "texture", "atlas", "png", &optimized)?;
     Ok(AtlasResult { output_path: output_path.to_string_lossy().to_string(), output_bytes: optimized.len() as u64, width, height })
   }).await.map_err(|error| error.to_string())?
 }
 
-fn emit(app: &AppHandle, path: &str, status: Status, output_bytes: Option<u64>, output_width: Option<u32>, output_height: Option<u32>, message: Option<String>, output_path: Option<String>) {
-  let _ = app.emit("job-progress", Progress { path: path.into(), status, output_bytes, output_width, output_height, message, output_path });
+type ProgressValues = (Status, Option<u64>, Option<u32>, Option<u32>, Option<String>, Option<String>);
+fn emit(app: &AppHandle, event: &str, path: &str, values: ProgressValues) {
+  let (status, output_bytes, output_width, output_height, message, output_path) = values;
+  let _ = app.emit(event, Progress { path: path.into(), status, output_bytes, output_width, output_height, message, output_path });
 }
 
-fn emit_normal(app: &AppHandle, path: &str, status: Status, output_bytes: Option<u64>, output_width: Option<u32>, output_height: Option<u32>, message: Option<String>, output_path: Option<String>) {
-  let _ = app.emit("normal-job-progress", Progress { path: path.into(), status, output_bytes, output_width, output_height, message, output_path });
-}
-
-fn process_file(path: &Path, settings: &Settings) -> Result<(Status, Option<u64>, u32, u32, Option<String>, Option<String>), String> {
+fn process_file(path: &Path, settings: &Settings) -> Result<ConversionResult, String> {
   if !is_supported_image(path) { return Err("対応している画像ファイルではありません".into()); }
   let original = fs::read(path).map_err(|error| error.to_string())?;
   if is_png(path) && original.windows(4).any(|chunk| chunk == b"acTL") { return Err("APNG は MVP では未対応です".into()); }
@@ -339,12 +341,11 @@ fn process_file(path: &Path, settings: &Settings) -> Result<(Status, Option<u64>
   }
   let output_dir = resolve_output_dir(path, settings.output_dir.as_deref())?;
   fs::create_dir_all(&output_dir).map_err(|error| error.to_string())?;
-  let output_path = unique_output_path(&output_dir, path.file_stem().and_then(|v| v.to_str()).unwrap_or("image"), extension);
-  fs::write(&output_path, optimized.as_slice()).map_err(|error| error.to_string())?;
+  let output_path = write_unique_output(&output_dir, path.file_stem().and_then(|v| v.to_str()).unwrap_or("image"), "smart", extension, &optimized)?;
   Ok((Status::Done, Some(optimized.len() as u64), width, height, Some(message), Some(output_path.to_string_lossy().to_string())))
 }
 
-fn process_normal_file(path: &Path, settings: &NormalSettings) -> Result<(Status, Option<u64>, u32, u32, Option<String>, Option<String>), String> {
+fn process_normal_file(path: &Path, settings: &NormalSettings) -> Result<ConversionResult, String> {
   if !is_supported_image(path) { return Err("対応している画像ファイルではありません".into()); }
   let original = fs::read(path).map_err(|error| error.to_string())?;
   if is_png(path) && original.windows(4).any(|chunk| chunk == b"acTL") { return Err("APNG は MVP では未対応です".into()); }
@@ -362,8 +363,7 @@ fn process_normal_file(path: &Path, settings: &NormalSettings) -> Result<(Status
   let optimized = oxipng::optimize_from_memory(&encoded, &options).map_err(|error| error.to_string())?;
   let output_dir = if let Some(dir) = settings.output_dir.as_deref().filter(|value| !value.trim().is_empty()) { PathBuf::from(dir) } else { path.parent().ok_or("入力元フォルダを取得できません")?.join("normal_maps") };
   fs::create_dir_all(&output_dir).map_err(|error| error.to_string())?;
-  let output_path = unique_named_output_path(&output_dir, path.file_stem().and_then(|value| value.to_str()).unwrap_or("image"), "normal");
-  fs::write(&output_path, optimized.as_slice()).map_err(|error| error.to_string())?;
+  let output_path = write_unique_output(&output_dir, path.file_stem().and_then(|value| value.to_str()).unwrap_or("image"), "normal", "png", &optimized)?;
   Ok((Status::Done, Some(optimized.len() as u64), width, height, Some("ノーマルマップを生成しました".into()), Some(output_path.to_string_lossy().to_string())))
 }
 
@@ -675,16 +675,26 @@ fn encode_indexed(image: &image::RgbaImage, width: u32, height: u32, colors: u32
 }
 
 fn resolve_output_dir(path: &Path, configured: Option<&str>) -> Result<PathBuf, String> { if let Some(dir) = configured.filter(|value| !value.trim().is_empty()) { Ok(PathBuf::from(dir)) } else { Ok(path.parent().ok_or("入力元フォルダを取得できません")?.join("optimized")) } }
-fn unique_output_path(dir: &Path, stem: &str, extension: &str) -> PathBuf {
-  let base = dir.join(format!("{stem}-smart.{extension}"));
-  if !base.exists() { return base; }
-  for index in 2.. {
-    let candidate = dir.join(format!("{stem}-smart-{index}.{extension}"));
-    if !candidate.exists() { return candidate; }
+fn write_unique_output(dir: &Path, stem: &str, suffix: &str, extension: &str, bytes: &[u8]) -> Result<PathBuf, String> {
+  for index in 1u64.. {
+    let number = if index == 1 { String::new() } else { format!("-{index}") };
+    let path = dir.join(format!("{stem}-{suffix}{number}.{extension}"));
+    match fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+      Ok(mut file) => {
+        if let Err(error) = file.write_all(bytes) {
+          drop(file);
+          // Only remove the new file exclusively created by this call.
+          let _ = fs::remove_file(&path);
+          return Err(error.to_string());
+        }
+        return Ok(path);
+      }
+      Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+      Err(error) => return Err(error.to_string()),
+    }
   }
-  unreachable!()
+  Err("出力ファイル名を確保できません".into())
 }
-fn unique_named_output_path(dir: &Path, stem: &str, suffix: &str) -> PathBuf { let base = dir.join(format!("{stem}-{suffix}.png")); if !base.exists() { return base; } for index in 2.. { let candidate = dir.join(format!("{stem}-{suffix}-{index}.png")); if !candidate.exists() { return candidate; } } unreachable!() }
 fn is_png(path: &Path) -> bool { path.extension().and_then(|extension| extension.to_str()).is_some_and(|extension| extension.eq_ignore_ascii_case("png")) }
 fn is_heic(path: &Path) -> bool { path.extension().and_then(|extension| extension.to_str()).is_some_and(|extension| matches!(extension.to_ascii_lowercase().as_str(), "heic" | "heif")) }
 fn standard_image_format(path: &Path) -> Option<image::ImageFormat> {
@@ -757,6 +767,8 @@ fn build_app_menu<R: tauri::Runtime>(app: &AppHandle<R>, japanese: bool) -> taur
     .website(Some("https://github.com/studio-juh/be-asset-optimizer"))
     .build();
   let help = SubmenuBuilder::new(app, text("ヘルプ(&H)", "Help (&H)"))
+    .item(&MenuItemBuilder::with_id("help-guide", text("使い方", "User Guide")).accelerator("F1").build(app)?)
+    .separator()
     .about_with_text(text("バージョン情報", "About Be Asset Optimizer"), Some(about))
     .build()?;
   MenuBuilder::new(app).items(&[&file, &tools, &view, &language, &help]).build()
@@ -788,6 +800,31 @@ mod tests {
 
   fn settings() -> Settings {
     Settings { output_dir: None, output_format: "png".into(), quality: 82, jpeg_background: "white".into(), max_width: None, max_height: None, scale_percent: None, resize_mode: "lanczos3".into(), color_mode: "auto".into(), colors: None, dithering: true, optimization: "safe".into() }
+  }
+
+  #[test]
+  fn concurrent_output_writes_preserve_every_result_and_existing_file() {
+    let id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let root = std::env::temp_dir().join(format!("be-asset-output-race-{}-{id}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let existing = root.join("image-smart.png");
+    fs::write(&existing, b"existing").unwrap();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(32));
+    let workers: Vec<_> = (0..32u8).map(|index| {
+      let directory = root.clone();
+      let barrier = barrier.clone();
+      std::thread::spawn(move || {
+        barrier.wait();
+        let path = write_unique_output(&directory, "image", "smart", "png", &[index; 64]).unwrap();
+        (path, index)
+      })
+    }).collect();
+    let results: Vec<_> = workers.into_iter().map(|worker| worker.join().unwrap()).collect();
+    let unique: std::collections::HashSet<_> = results.iter().map(|(path, _)| path).collect();
+    assert_eq!(unique.len(), 32);
+    assert_eq!(fs::read(&existing).unwrap(), b"existing");
+    for (path, index) in results { assert_eq!(fs::read(path).unwrap(), vec![index; 64]); }
+    fs::remove_dir_all(root).unwrap();
   }
 
   #[test]

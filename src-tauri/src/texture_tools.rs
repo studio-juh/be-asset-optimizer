@@ -29,10 +29,9 @@ fn load_checked(path: &str) -> Result<image::RgbaImage, String> {
 fn save(image: &image::RgbaImage, output: Option<&str>, source: &str, suffix: &str) -> Result<AtlasResult, String> {
   let dir = resolve_output_dir(Path::new(source), output)?;
   fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-  let path = unique_named_output_path(&dir, Path::new(source).file_stem().and_then(|s| s.to_str()).unwrap_or("texture"), suffix);
   let encoded = encode_rgba(image, image.width(), image.height())?;
   let encoded = oxipng::optimize_from_memory(&encoded, &lossless_options(0)).map_err(|e| e.to_string())?;
-  fs::write(&path, &encoded).map_err(|e| e.to_string())?;
+  let path = write_unique_output(&dir, Path::new(source).file_stem().and_then(|s| s.to_str()).unwrap_or("texture"), suffix, "png", &encoded)?;
   Ok(AtlasResult { output_path: path.to_string_lossy().into(), output_bytes: encoded.len() as u64, width: image.width(), height: image.height() })
 }
 fn component(pixel: &image::Rgba<u8>, channel: &str) -> Result<u8, String> {
@@ -101,10 +100,9 @@ pub(crate) async fn adjust_normal(settings: NormalAdjustSettings) -> Result<Atla
     // Normal maps do not require an alpha channel.
     let dir = resolve_output_dir(Path::new(&settings.base),settings.output_dir.as_deref())?;
     fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
-    let path = unique_named_output_path(&dir,Path::new(&settings.base).file_stem().and_then(|s|s.to_str()).unwrap_or("normal"),"adjusted");
     let encoded = encode_rgb24(&output,output.width(),output.height())?;
     let encoded = oxipng::optimize_from_memory(&encoded,&lossless_options(0)).map_err(|e|e.to_string())?;
-    fs::write(&path,&encoded).map_err(|e|e.to_string())?;
+    let path = write_unique_output(&dir,Path::new(&settings.base).file_stem().and_then(|s|s.to_str()).unwrap_or("normal"),"adjusted","png",&encoded)?;
     Ok(AtlasResult { output_path:path.to_string_lossy().into(), output_bytes:encoded.len() as u64,width:output.width(),height:output.height() })
   }).await.map_err(|e|e.to_string())?
 }

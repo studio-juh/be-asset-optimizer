@@ -13,10 +13,11 @@ import { localizedDetail, t } from "./i18n";
 type TextureFile = { path: string; relativePath: string; name: string; bytes: number };
 type ModelPackage = { path: string; name: string; bytesBase64: string; fileBytes: number; textures: TextureFile[]; scanLimited: boolean };
 type TextureResolution = { request: string; resolvedPath?: string; status: "found" | "missing" | "error" };
-type ModelStats = { meshes: number; triangles: number; materials: number; animations: number; missingUv: number; mirrored: number; textureBytes: number; textures: number };
+type LoadedTexture = { name: string; width: number; height: number; powerOfTwo: boolean };
+type ModelStats = { meshes: number; triangles: number; materials: number; animations: number; missingUv: number; mirrored: number; textureBytes: number; textures: number; textureDetails: LoadedTexture[] };
 type TextureDiagnosis = { path: string; width: number; height: number; fileBytes: number; rgbaBytes: number; powerOfTwo: boolean; error?: string };
 
-const emptyStats: ModelStats = { meshes: 0, triangles: 0, materials: 0, animations: 0, missingUv: 0, mirrored: 0, textureBytes: 0, textures: 0 };
+const emptyStats: ModelStats = { meshes: 0, triangles: 0, materials: 0, animations: 0, missingUv: 0, mirrored: 0, textureBytes: 0, textures: 0, textureDetails: [] };
 
 export default function ModelPreview({ active = true }: { active?: boolean }) {
   const activeRef = useRef(active);
@@ -132,13 +133,18 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
     scene.add(fillLight);
 
     let disposed = false;
+    let root: THREE.Group | undefined;
     let resolutionTimer: number | undefined;
     const manager = new THREE.LoadingManager();
     manager.addHandler(/\.tga$/i, new TGALoader(manager));
     manager.addHandler(/\.dds$/i, new DDSLoader(manager));
     const resultMap = new Map<string, TextureResolution>();
     const assetRequests = new Map<string, string>();
-    const flushResolutions = () => { if (!disposed) setResolutions(Array.from(resultMap.values()).sort((a, b) => a.request.localeCompare(b.request))); };
+    const flushResolutions = () => {
+      if (disposed) return;
+      setResolutions(Array.from(resultMap.values()).sort((a, b) => a.request.localeCompare(b.request)));
+      if (root) setStats({ ...inspectModel(root), animations: root.animations.length });
+    };
     manager.setURLModifier((url) => {
       if (/^(data:|blob:)/i.test(url)) return url;
       // Never let references in an imported model trigger network or arbitrary file requests.
@@ -167,7 +173,6 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
       flushResolutions();
     };
 
-    let root: THREE.Group | undefined;
     let resizeObserver: ResizeObserver | undefined;
     let frame = 0;
 
@@ -316,6 +321,8 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
   };
 
   const missingCount = resolutions.filter((item) => item.status !== "found").length;
+  const diagnosisDimensions = [...(diagnosis ?? []).filter(item => !item.error), ...stats.textureDetails];
+  const mixedResolutions = new Set(diagnosisDimensions.filter(item => item.width > 0 && item.height > 0).map(item => `${item.width}x${item.height}`)).size > 1;
   return <section className="model-preview">
     <div className="model-toolbar">
       <div className="model-title"><strong title={model?.path}>{model?.name ?? t("3Dプレビュー", "3D Preview")}</strong>{model && <span>{t(`${formatBytes(model.fileBytes)} ・ メッシュ ${stats.meshes} ・ 三角形 ${stats.triangles.toLocaleString()}`, `${formatBytes(model.fileBytes)} · ${stats.meshes} meshes · ${stats.triangles.toLocaleString()} triangles`)}</span>}{notice && <span role="status">{notice}</span>}</div>
@@ -343,7 +350,7 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
         {model?.scanLimited && <p className="model-warning">{t("画像が多いため、探索は1,500件で打ち切りました。", "The texture scan stopped after 1,500 files.")}</p>}
         <div className="model-stats"><span>{t(`マテリアル ${stats.materials}`, `Materials ${stats.materials}`)}</span><span>{t(`アニメーション ${stats.animations}`, `Animations ${stats.animations}`)}</span></div>
         <div className="actions"><button disabled={!model || loading || diagnosing} onClick={()=>void diagnose()}>{diagnosing?t("診断中…","Diagnosing…"):t("アセット診断","Diagnose Asset")}</button></div>
-        {diagnosis && <div className="diagnosis"><h3>{t("診断結果","Diagnosis")}</h3><p>{t("読み込み済み画像（埋め込み含む）RGBA8概算", "Loaded images (including embedded): estimated RGBA8 memory")}: {stats.textures} / {formatBytes(Math.round(stats.textureBytes * 4 / 3))}</p><p>{t(`三角形 ${stats.triangles.toLocaleString()} / メッシュ ${stats.meshes} / マテリアル ${stats.materials}`,`${stats.triangles.toLocaleString()} triangles / ${stats.meshes} meshes / ${stats.materials} materials`)}</p><p>{t(`UVなし ${stats.missingUv} / 反転スケール ${stats.mirrored} / テクスチャ不足 ${missingCount}`,`Missing UV: ${stats.missingUv} / Mirrored transforms: ${stats.mirrored} / Missing textures: ${missingCount}`)}</p><p>{t("参照画像 RGBA8 メモリ概算（ミップ込み）","Referenced images: estimated RGBA8 memory (with mipmaps)")}: {formatBytes(Math.round(diagnosis.reduce((sum,item)=>sum+item.rgbaBytes,0)*4/3))}</p>{diagnosis.map(item=><p key={item.path} title={item.path}>{fileName(item.path)} · {item.width} × {item.height} · {formatBytes(item.fileBytes)} {item.error ? `⚠ ${localizedDetail(item.error,"Unreadable")}` : !item.powerOfTwo ? t("⚠ 非2の累乗","⚠ Non-power-of-two") : ""}</p>)}{new Set(diagnosis.filter(item=>!item.error).map(item=>`${item.width}x${item.height}`)).size>1&&<p>{t("⚠ テクスチャの解像度が混在しています","⚠ Mixed texture resolutions")}</p>}</div>}
+        {diagnosis && <div className="diagnosis"><h3>{t("診断結果","Diagnosis")}</h3><p>{t("読み込み済み画像（埋め込み含む）RGBA8概算", "Loaded images (including embedded): estimated RGBA8 memory")}: {stats.textures} / {formatBytes(Math.round(stats.textureBytes * 4 / 3))}</p><p>{t(`三角形 ${stats.triangles.toLocaleString()} / メッシュ ${stats.meshes} / マテリアル ${stats.materials}`,`${stats.triangles.toLocaleString()} triangles / ${stats.meshes} meshes / ${stats.materials} materials`)}</p><p>{t(`UVなし ${stats.missingUv} / 反転スケール ${stats.mirrored} / テクスチャ不足 ${missingCount}`,`Missing UV: ${stats.missingUv} / Mirrored transforms: ${stats.mirrored} / Missing textures: ${missingCount}`)}</p><p>{t("参照画像 RGBA8 メモリ概算（ミップ込み）","Referenced images: estimated RGBA8 memory (with mipmaps)")}: {formatBytes(Math.round(diagnosis.reduce((sum,item)=>sum+item.rgbaBytes,0)*4/3))}</p>{diagnosis.map(item=><p key={item.path} title={item.path}>{fileName(item.path)} · {item.width} × {item.height} · {formatBytes(item.fileBytes)} {item.error ? `⚠ ${localizedDetail(item.error,"Unreadable")}` : !item.powerOfTwo ? t("⚠ 非2の累乗","⚠ Non-power-of-two") : ""}</p>)}{stats.textureDetails.map((item,index)=><p key={index}>{t("読み込み画像", "Loaded image")} · {item.name} · {item.width} × {item.height} {!item.powerOfTwo && t("⚠ 非2の累乗", "⚠ Non-power-of-two")}</p>)}{mixedResolutions&&<p>{t("⚠ テクスチャの解像度が混在しています","⚠ Mixed texture resolutions")}</p>}</div>}
       </aside>
     </div>
   </section>;
@@ -407,6 +414,7 @@ function inspectModel(root: THREE.Object3D) {
   const materials = new Set<THREE.Material>();
   const images = new Set<object>();
   let textureBytes = 0;
+  const textureDetails: LoadedTexture[] = [];
   let missingUv = 0;
   let mirrored = 0;
   root.updateMatrixWorld(true);
@@ -419,12 +427,17 @@ function inspectModel(root: THREE.Object3D) {
     triangles += geometry.index ? geometry.index.count / 3 : (geometry.attributes.position?.count ?? 0) / 3;
     asMaterials(object.material).forEach((material) => materials.add(material));
   });
-  materials.forEach(material => Object.values(material).forEach(value => {
+  materials.forEach(material => Object.entries(material).forEach(([channel, value]) => {
     if (!(value instanceof THREE.Texture) || !value.image || images.has(value.image)) return;
+    const width = value.image.naturalWidth || value.image.width || 0;
+    const height = value.image.naturalHeight || value.image.height || 0;
+    if (!width || !height) return;
     images.add(value.image);
-    textureBytes += (value.image.width || 0) * (value.image.height || 0) * 4;
+    textureBytes += width * height * 4;
+    const powerOfTwo = THREE.MathUtils.isPowerOfTwo(width) && THREE.MathUtils.isPowerOfTwo(height);
+    textureDetails.push({ name: value.name || channel, width, height, powerOfTwo });
   }));
-  return { meshes, triangles: Math.round(triangles), materials: materials.size, missingUv, mirrored, textureBytes, textures: images.size };
+  return { meshes, triangles: Math.round(triangles), materials: materials.size, missingUv, mirrored, textureBytes, textures: images.size, textureDetails };
 }
 
 function disposeObject(root: THREE.Object3D) {

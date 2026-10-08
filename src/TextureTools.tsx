@@ -31,7 +31,8 @@ export default function TextureTools({ mode }: { mode: "channels" | "adjust" }) 
   const update = (i:number, patch: Partial<Channel>) => { setChannels(current=>current.map((c,index)=>index===i?{...c,...patch}:c));setResults([]); };
   receiveRef.current = paths => {
     if (busyRef.current) return;
-    if (mode === "channels") { setChannels(current=> { const next=current.map(c=>({...c})); paths.slice(0,4-target.current).forEach((path,i)=>next[target.current+i].path=path); return next; }); }
+    const index = target.current;
+    if (mode === "channels") { setChannels(current=> { const next=current.map(c=>({...c})); paths.slice(0,4-index).forEach((path,i)=>next[index+i].path=path); return next; }); }
     else { if (target.current === 1) setDetail(paths[0] ?? ""); else {setBase(paths[0]??"");if(paths[1])setDetail(paths[1]);} }
     setResults([]);
   };

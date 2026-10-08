@@ -1,4 +1,4 @@
-# BOOTH掲載用テキスト — Be Asset Optimizer 0.6.7
+# BOOTH掲載用テキスト — Be Asset Optimizer 1.0.0
 
 以下の「商品名」「短い紹介文」「商品説明」はBOOTHの商品ページへ貼り付けて使用できます。公開前チェックは掲載文に含めません。
 
@@ -66,8 +66,8 @@ HEIC / HEIFはWindowsの追加コーデックなしで読み込めます。GIF�
 
 ### 配布ファイル
 
-- セットアップ版: `Be_Asset_Optimizer_0.6.7_BOOTH_Setup.zip`（インストーラー、README、ライセンスを同梱）
-- ポータブル版: `Be_Asset_Optimizer_0.6.7_windows_x64_portable.zip`
+- セットアップ版: `Be_Asset_Optimizer_1.0.0_BOOTH_Setup.zip`（インストーラー、README、ライセンスを同梱）
+- ポータブル版: `Be_Asset_Optimizer_1.0.0_windows_x64_portable.zip`
 
 通常はセットアップ版がおすすめです。インストールせず試したい場合やUSBメモリ等で持ち運ぶ場合はポータブル版を使用してください。両方の機能は同じです。
 
@@ -118,7 +118,7 @@ https://github.com/studio-juh/be-asset-optimizer/issues
 - [ ] セットアップ版とポータブル版を別のWindowsユーザー環境で起動できる
 - [ ] Windowsの警告表示について商品説明へ記載した
 - [ ] 公開バイナリと同じソースをGitHubへpushした
-- [ ] `v0.6.7` タグまたはReleaseから対応ソースを取得できる
+- [ ] `v1.0.0` タグまたはReleaseから対応ソースを取得できる
 - [ ] `LICENSE` と `THIRD_PARTY_NOTICES.md` を配布物へ同梱した
 - [ ] 配布ファイルのSHA-256を控えた
 - [ ] 商品ページのスクリーンショットに個人情報やローカルパスが写っていない

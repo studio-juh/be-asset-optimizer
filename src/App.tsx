@@ -15,6 +15,7 @@ import { storePreview, storePreviewTab, StorePreviewTab } from "./storePreview";
 
 const ModelPreview = lazy(() => import("./ModelPreview"));
 const MaterialPreview = lazy(() => import("./MaterialPreview"));
+const HelpPage = lazy(() => import("./HelpPage"));
 
 type Status = "ready" | "processing" | "done" | "skipped" | "failed";
 type ResizeMode = "lanczos3" | "nearest";
@@ -92,6 +93,7 @@ const dimensions = (width?: number, height?: number) =>
 
 export default function App() {
   const [appLocale, setAppLocale] = useState(locale);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<StorePreviewTab>(storePreviewTab);
   const [visitedTabs, setVisitedTabs] = useState<Set<StorePreviewTab>>(() => new Set([storePreviewTab]));
   const activeTabRef = useRef(activeTab);
@@ -139,6 +141,7 @@ export default function App() {
     });
 
     const unlistenDrop = getCurrentWebview().onDragDropEvent((event) => {
+      if (document.querySelector("dialog.help-dialog[open]")) return;
       if (activeTab === "atlas") {
         window.dispatchEvent(new CustomEvent("smartpng-atlas-drag", { detail: event.payload }));
         return;
@@ -207,9 +210,16 @@ export default function App() {
   };
 
   useEffect(() => {
+    const openHelp = (event: KeyboardEvent) => { if (event.key === "F1") { event.preventDefault(); setHelpOpen(true); } };
+    window.addEventListener("keydown", openHelp);
+    return () => window.removeEventListener("keydown", openHelp);
+  }, []);
+
+  useEffect(() => {
     if (storePreview) return;
     const unlistenMenu = listen<string>("app-menu-action", (event) => {
       switch (event.payload) {
+        case "help-guide": setHelpOpen(true); break;
         case "language-ja": setLocale("ja"); setAppLocale("ja"); break;
         case "language-en": setLocale("en"); setAppLocale("en"); break;
         case "file-open":
@@ -273,6 +283,7 @@ export default function App() {
   const sizeChange = saved >= 0 ? t(`${formatBytes(saved)} 削減`, `${formatBytes(saved)} saved`) : t(`${formatBytes(-saved)} 増加`, `${formatBytes(-saved)} larger`);
 
   return <main>
+    {helpOpen && <Suspense fallback={null}><HelpPage initialTopic={activeTab} onClose={() => setHelpOpen(false)} /></Suspense>}
     <nav className="tabs" aria-label={t("機能", "Tools")}>
       <button className={`primary-tool ${activeTab === "optimize" ? "active" : ""}`} onClick={() => setActiveTab("optimize")}>{t("画像最適化", "Image Optimization")}</button>
       <span className="tab-separator" aria-hidden="true" />

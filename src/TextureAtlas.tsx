@@ -128,7 +128,10 @@ export default function TextureAtlas() {
       <label>{t("出力先", "Output folder")}<div className="path-row"><input disabled={busy} value={outputDir} onChange={event => setOutputDir(event.target.value)} placeholder={t("最初の画像のフォルダー / atlas", "First image folder / atlas")} /><button disabled={busy} onClick={async () => { const dir = await open({ directory: true, multiple: false }); if (typeof dir === "string") setOutputDir(dir); }}>{t("選択", "Choose")}</button></div></label>
       <fieldset disabled={busy}><legend>{t("配置", "Layout")}</legend>
         <label>{t("端の色を延長する余白", "Edge Extrusion Padding")}<select value={padding} onChange={event => { setPadding(Number(event.target.value)); setResult(undefined); }}>{[0,1,2,4,8,16,32,64].map(value=><option key={value} value={value}>{value} px</option>)}</select></label>
-        <div className="actions atlas-layout-actions"><button type="button" onClick={() => { let next = slotsRef.current; for (const slot of [...next]) if (slot.size === 2) next = splitSlot(next, slot.id); commit(next); }}>{t("全枠を4分割（4×4）", "Split all slots (4×4)")}</button></div>
+        <div className="actions atlas-layout-actions">
+          <button type="button" disabled={slots.every(slot => slot.size === 1)} onClick={() => { let next = slotsRef.current; for (const slot of [...next]) if (slot.size === 2) next = splitSlot(next, slot.id); commit(next); }}>{t("全枠を4分割（4×4）", "Split all slots (4×4)")}</button>
+          <button type="button" onClick={() => { commit(emptyAtlas()); setNotice(t("配置を2×2へ戻しました", "Reset to 2×2 layout")); }}>{t("クリアして2×2へ戻す", "Clear and reset to 2×2")}</button>
+        </div>
         <label className="checkbox"><input type="checkbox" checked={square} onChange={event => { setSquare(event.target.checked); setResult(undefined); }} />{t("各画像を正方形として補完", "Pad images to square cells")}</label>
         {square && <label>{t("1大枠の解像度", "Resolution per large slot")}<select value={resolution} onChange={event => { setResolution(event.target.value); setResult(undefined); }}><option value="">{t("自動", "Automatic")}</option>{[256,512,1024,2048,4096].map(size => <option key={size} value={size}>{size} × {size}</option>)}<option value="custom">Custom…</option></select>{resolution === "custom" && <input inputMode="numeric" value={custom} onChange={event => { setCustom(event.target.value); setResult(undefined); }} placeholder="16–4096 px" />}</label>}
       </fieldset>
@@ -137,7 +140,7 @@ export default function TextureAtlas() {
       <div className="atlas-grid atlas-flexible">{slots.map(slot => <Tile key={slot.id} slot={slot} warning={warnings.get(slot.id)} disabled={busy} highlighted={target === slot.id}
         onAdd={() => void chooseFiles(slot.id)} onRemove={() => { if (!busyRef.current) commit(slotsRef.current.map(item => item.id === slot.id ? { ...item, texture: undefined } : item)); }}
         onSplit={() => { if (!busyRef.current) commit(splitSlot(slotsRef.current, slot.id)); }} onSwap={source => swap(source, slot.id)} onHighlight={setTarget} />)}</div>
-      <div className="queue-footer"><div className="footer-actions"><button disabled={busy} onClick={() => { commit(emptyAtlas()); setNotice(t("配置を2×2へ戻しました", "Reset to 2×2 layout")); }}>{t("クリアして2×2へ戻す", "Clear and reset to 2×2")}</button>{result && <button onClick={() => revealItemInDir(result.outputPath)}>{t("出力を開く", "Open Output")}</button>}</div><span>{t("空き枠は黒", "Empty slots are black")}</span></div>
+      <div className="queue-footer"><div className="footer-actions">{result && <button onClick={() => revealItemInDir(result.outputPath)}>{t("出力を開く", "Open Output")}</button>}</div><span>{t("空き枠は黒", "Empty slots are black")}</span></div>
     </section>
   </section>;
 }

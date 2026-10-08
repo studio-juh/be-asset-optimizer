@@ -7,6 +7,8 @@ application is redistributed.
 - Tauri — MIT OR Apache-2.0
 - oxipng — MIT
 - Three.js — MIT
+- Monochrome Studio 02 HDRI — CC0-1.0; Grzegorz Wronkowski / Poly Haven.
+  Source: https://polyhaven.com/a/monochrome_studio_02
 - React — MIT
 - webp — MIT OR Apache-2.0; bundled libwebp — BSD-3-Clause
 - heif-oxide and rust_h265 — MIT OR Apache-2.0; pure-Rust HEIC/HEIF decoding
