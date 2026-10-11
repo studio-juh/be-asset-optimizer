@@ -9,6 +9,6 @@ export const storePreviewTab: StorePreviewTab = storePreview && ["optimize", "no
   ? requestedTab as StorePreviewTab
   : "optimize";
 
-export const storePreviewLanguage = storePreview && ["en", "ja"].includes(params?.get("lang") ?? "")
+export const storePreviewLanguage = storePreview && ["en", "ja", "zh-CN", "de"].includes(params?.get("lang") ?? "")
   ? params?.get("lang")
   : null;

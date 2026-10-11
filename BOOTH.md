@@ -1,4 +1,4 @@
-# BOOTH掲載用テキスト — Be Asset Optimizer 1.0.0
+# BOOTH掲載用テキスト — Be Asset Optimizer 1.1.0
 
 以下の「商品名」「短い紹介文」「商品説明」はBOOTHの商品ページへ貼り付けて使用できます。公開前チェックは掲載文に含めません。
 
@@ -46,6 +46,16 @@ Be Asset Optimizerは、Blenderで使う画像・テクスチャ・3Dアセッ�
 - FBXの相対テクスチャ探索
 - GLB埋め込み画像、アニメーション、ワイヤーフレーム表示
 - 自動回転と回転リセット
+- テクスチャ不足、解像度の混在、UV不足などのアセット診断
+
+■ PBR・チャンネル・ノーマル調整
+
+- HDRI照明を使ったPBRマテリアルプレビュー
+- RGBAチャンネル合成・分離
+- 既存ノーマルの強度調整・G反転・詳細ノーマル合成
+- 日本語／英語／中国語（簡体字）／ドイツ語、スクリーンショット付きの内蔵ヘルプ
+
+処理はPC内で行われ、入力画像や3Dモデルを外部へアップロードしません。AI復元・生成AI・モデルダウンロード機能はありません。
 
 ### 対応形式
 
@@ -62,14 +72,27 @@ HEIC / HEIFはWindowsの追加コーデックなしで読み込めます。GIF�
 - Windows 10 / 11 64-bit
 - Microsoft Edge WebView2 Runtime
 - 960 × 640以上の画面
+- 3DプレビューにはWebGL 2対応環境が必要です
 
 
 ### 配布ファイル
 
-- セットアップ版: `Be_Asset_Optimizer_1.0.0_BOOTH_Setup.zip`（インストーラー、README、ライセンスを同梱）
-- ポータブル版: `Be_Asset_Optimizer_1.0.0_windows_x64_portable.zip`
+- セットアップ版: `Be_Asset_Optimizer_1.1.0_BOOTH_Setup.zip`（インストーラー、README、ライセンスを同梱）
+- ポータブル版: `Be_Asset_Optimizer_1.1.0_windows_x64_portable.zip`
 
 通常はセットアップ版がおすすめです。インストールせず試したい場合やUSBメモリ等で持ち運ぶ場合はポータブル版を使用してください。両方の機能は同じです。
+
+セットアップ版はZIPを展開後、同梱のインストーラーを実行してください。ポータブル版はZIPを展開後、「Be Asset Optimizer.exe」を起動してください。ポータブル版にはCLIも同梱しています。
+
+どちらもREADME、ライセンス、第三者ライセンス情報を同梱しています。
+
+### Microsoft Store版
+
+通常の導入にはMicrosoft Store版も利用できます。
+
+https://apps.microsoft.com/detail/9ND9F3T2W5GM?hl=ja-jp&gl=JP
+
+BOOTHのZIP版は未署名です。Windowsの設定によって警告が表示されたり、Smart App Controlで起動がブロックされたりする場合があります。その場合はMicrosoft Store版をご利用ください。
 
 ### ご注意
 
@@ -118,7 +141,7 @@ https://github.com/studio-juh/be-asset-optimizer/issues
 - [ ] セットアップ版とポータブル版を別のWindowsユーザー環境で起動できる
 - [ ] Windowsの警告表示について商品説明へ記載した
 - [ ] 公開バイナリと同じソースをGitHubへpushした
-- [ ] `v1.0.0` タグまたはReleaseから対応ソースを取得できる
+- [ ] `v1.1.0` タグまたはReleaseから対応ソースを取得できる
 - [ ] `LICENSE` と `THIRD_PARTY_NOTICES.md` を配布物へ同梱した
 - [ ] 配布ファイルのSHA-256を控えた
 - [ ] 商品ページのスクリーンショットに個人情報やローカルパスが写っていない

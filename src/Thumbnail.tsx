@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
+import { t } from "./i18n";
 
 type Position = { left: number; top: number };
 
@@ -35,6 +36,6 @@ export default function Thumbnail({ path, alt, fallbackLabel }: { path: string; 
 
   return <>
     <span ref={target} className="thumbnail" onMouseEnter={show} onMouseLeave={() => setPosition(null)}>{thumbnail ? <img src={thumbnail} alt="" /> : <span className="thumbnail-loading">{fallbackLabel}</span>}</span>
-    {position && createPortal(<div className="preview-overlay" style={position}>{expanded || thumbnail ? <img src={expanded || thumbnail || ""} alt={alt} /> : <span>Loading…</span>}</div>, document.body)}
+    {position && createPortal(<div className="preview-overlay" style={position}>{expanded || thumbnail ? <img src={expanded || thumbnail || ""} alt={alt} /> : <span>{t("読込中…", "Loading…")}</span>}</div>, document.body)}
   </>;
 }

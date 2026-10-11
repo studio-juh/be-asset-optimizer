@@ -2,11 +2,15 @@
 // Start npm run dev, then run this script with Playwright installed or PLAYWRIGHT_MODULE set.
 import { createRequire } from "node:module";
 import { mkdir } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
+const storeCapture = process.env.CAPTURE_STORE === "1";
+const version = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+const storeNames = { optimize: "01-image-optimization", normal: "02-normal-map", atlas: "03-texture-atlas", preview: "04-3d-preview", material: "05-pbr-preview", channels: "06-channel-packing", adjust: "07-normal-adjustment" };
 const browser = await chromium.launch({ channel: "msedge", headless: true, args: ["--enable-unsafe-swiftshader"] });
 try {
-  const page = await browser.newPage({ viewport: { width: 1180, height: 700 }, deviceScaleFactor: 1 });
+  const page = await browser.newPage({ viewport: storeCapture ? { width: 1366, height: 768 } : { width: 1180, height: 700 }, deviceScaleFactor: 1 });
   page.setDefaultTimeout(15000);
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -43,21 +47,22 @@ try {
       return null;
     },transformCallback:()=>1,unregisterCallback:()=>{},convertFileSrc:path=>path};
   });
-  for(const lang of ["ja","en"]) {
-    const dir=new URL(`../public/help/${lang}/`,import.meta.url); await mkdir(dir,{recursive:true});
+  for(const lang of (process.env.HELP_CAPTURE_LANGUAGES || "ja,en").split(",")) {
+    const dir=new URL(storeCapture ? `../store/screenshots/${version}/${lang === "ja" ? "ja-JP" : "en-US"}/` : `../public/help/${lang}/`,import.meta.url); await mkdir(dir,{recursive:true});
     for(const tab of ["optimize","normal","atlas","preview","material","channels","adjust"]) {
       if (process.env.HELP_CAPTURE_TABS && !process.env.HELP_CAPTURE_TABS.split(",").includes(tab)) continue;
       await page.goto(`${process.env.HELP_CAPTURE_URL || "http://127.0.0.1:1420"}/?storePreview=1&lang=${lang}&tab=${tab}`);
       const panel=page.locator(".tool-panel:not([hidden])");
-      if(tab==="optimize"||tab==="normal")await panel.getByRole("button",{name:lang==="ja"?"ファイルを追加":"Add Files",exact:true}).click();
+      if(tab==="optimize"||tab==="normal")await panel.locator(".queue-toolbar .actions button").first().click();
       else if(tab==="atlas")await page.evaluate(()=>window.dispatchEvent(new CustomEvent("smartpng-atlas-drag",{detail:{type:"drop",paths:["demo/albedo.png","demo/normal.png","demo/roughness.png"],position:{x:700,y:250}}})));
-      else if(tab==="preview") {await panel.locator("canvas").waitFor();await page.evaluate(()=>window.dispatchEvent(new CustomEvent("smartpng-model-drop",{detail:["demo/cube.glb"]})));await panel.getByRole("button",{name:lang==="ja"?"アセット診断":"Diagnose Asset"}).click();}
+      else if(tab==="preview") {await panel.locator("canvas").waitFor();await page.evaluate(()=>window.dispatchEvent(new CustomEvent("smartpng-model-drop",{detail:["demo/cube.glb"]})));await panel.locator(".model-inspector .actions button").click();}
       else if(tab==="material") {await panel.locator("canvas").waitFor();for(const [key,path] of [["albedo","demo/albedo.png"],["normal","demo/normal.png"],["roughness","demo/roughness.png"]]){await panel.locator(`[data-material-map="${key}"]`).hover();await page.evaluate(path=>window.dispatchEvent(new CustomEvent("smartpng-material-drop",{detail:[path]})),path);}}
       else if(tab==="channels") {await panel.locator(".texture-input").first().waitFor();await page.evaluate(()=>window.dispatchEvent(new CustomEvent("smartpng-channels-drop",{detail:["demo/ao.png","demo/roughness.png","demo/metallic.png"]})));await panel.getByRole("button",{name:"ORM",exact:true}).click();}
       else {await panel.locator(".texture-input").first().waitFor();await page.evaluate(()=>window.dispatchEvent(new CustomEvent("smartpng-adjust-drop",{detail:["demo/normal.png","demo/detail.png"]})));await panel.locator(".normal-preview-pane:last-child img").waitFor();}
       await page.waitForTimeout(450);
-      await page.screenshot({path:new URL(`${tab}.png`,dir).pathname.replace(/^\/(\w:)/,"$1")});
-      console.log(`${lang}/${tab}.png`);
+      const fileName = `${storeCapture ? storeNames[tab] : tab}.png`;
+      await page.screenshot({path:new URL(fileName,dir).pathname.replace(/^\/(\w:)/,"$1")});
+      console.log(`${lang}/${fileName}`);
     }
   }
   if(errors.length)throw Error(errors.join("\n"));

@@ -5,7 +5,7 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import Thumbnail from "./Thumbnail";
 import NormalAdjustPreview from "./NormalAdjustPreview";
 import { supportedImageFilter } from "./imageFiles";
-import { localizedDetail, t } from "./i18n";
+import { localizedDetail, t, useLocalizedState } from "./i18n";
 
 type Channel = { path: string | null; channel: string; invert: boolean; value: number };
 type Result = { outputPath: string; outputBytes: number; width: number; height: number };
@@ -24,7 +24,7 @@ export default function TextureTools({ mode }: { mode: "channels" | "adjust" }) 
   const [output,setOutput] = useState("");
   const [busy,setBusy] = useState(false);
   const [results,setResults] = useState<Result[]>([]);
-  const [notice,setNotice] = useState("");
+  const [notice,setNotice] = useLocalizedState(() => "");
   const target = useRef(0);
   const busyRef = useRef(false);
   const receiveRef = useRef<(paths:string[])=>void>(()=>{});
@@ -46,20 +46,20 @@ export default function TextureTools({ mode }: { mode: "channels" | "adjust" }) 
     return()=>{window.removeEventListener(`smartpng-${mode}-drop`,drop);window.removeEventListener(`smartpng-${mode}-menu-open`,menu);window.removeEventListener(`smartpng-${mode}-target`,locate);};
   },[mode]);
   const run = async (split=false) => {
-    if(busyRef.current)return;busyRef.current=true;setBusy(true);setNotice("");setResults([]);
+    if(busyRef.current)return;busyRef.current=true;setBusy(true);setNotice(() => (""));setResults([]);
     try {
       if(mode==="channels"&&split) { const path=channels.find(c=>c.path)?.path;if(!path)throw Error(t("画像を指定してください","Choose an image"));setResults(await invoke<Result[]>("split_channels",{path,outputDir:output||null})); }
       else if(mode==="channels") setResults([await invoke<Result>("pack_channels",{settings:{channels,resolution:resolution?Number(resolution):null,outputDir:output||null}})]);
       else setResults([await invoke<Result>("adjust_normal",{settings:{base,detail:detail||null,strength,detailStrength,flipGreen:flip,outputDir:output||null}})]);
-      setNotice(t("保存しました","Saved"));
-    }catch(error){setNotice(localizedDetail(error,"Processing failed"));}finally{busyRef.current=false;setBusy(false);}
+      setNotice(() => (t("保存しました","Saved")));
+    }catch(error){setNotice(() => (localizedDetail(error,"Processing failed")));}finally{busyRef.current=false;setBusy(false);}
   };
   const preset=(kind:string)=>{setLayout(kind);const next=initialChannels();if(kind==="orm"){next[0].value=255;next[1].value=255;}if(kind==="unity"){next[3].invert=true;next[3].value=255;}setChannels(current=>next.map((c,i)=>({...c,path:current[i].path})));setResults([]);};
-  const clear=()=>{setChannels(initialChannels());setLayout("custom");setBase("");setDetail("");setResults([]);setNotice("");target.current=0;};
-  const channelLabels=layout==="orm"?["R · AO","G · Roughness","B · Metallic","A"]:layout==="unity"?["R · Metallic","G","B","A · Roughness → Smoothness"]:["R","G","B","A"];
+  const clear=()=>{setChannels(initialChannels());setLayout("custom");setBase("");setDetail("");setResults([]);setNotice(() => (""));target.current=0;};
+  const channelLabels=layout==="orm"?["R · AO",t("G · ラフネス","G · Roughness"),t("B · メタリック","B · Metallic"),"A"]:layout==="unity"?[t("R · メタリック","R · Metallic"),"G","B",t("A · ラフネス → スムースネス","A · Roughness → Smoothness")]:["R","G","B","A"];
   return <section className="workspace">
     <aside className="settings"><h2>{mode==="channels"?t("チャンネル設定","Channel Settings"):t("ノーマル調整","Normal Adjustment")}</h2>
-      <label>{t("出力先","Output folder")}<div className="path-row"><input disabled={busy} value={output} onChange={e=>setOutput(e.target.value)} placeholder="optimized"/><button disabled={busy} onClick={async()=>{const dir=await open({directory:true,multiple:false});if(typeof dir==="string")setOutput(dir);}}>{t("選択","Choose")}</button></div></label>
+      <label>{t("出力先","Output folder")}<div className="path-row"><input disabled={busy} value={output} onChange={e=>setOutput(e.target.value)} placeholder={t("入力元 / optimized", "Source folder / optimized")}/><button disabled={busy} onClick={async()=>{const dir=await open({directory:true,multiple:false});if(typeof dir==="string")setOutput(dir);}}>{t("選択","Choose")}</button></div></label>
       {mode==="channels"?<fieldset disabled={busy}><legend>{t("配置プリセット","Layout Preset")}</legend><div className="segmented"><button onClick={()=>preset("custom")}>RGBA</button><button onClick={()=>preset("orm")}>ORM</button><button onClick={()=>preset("unity")}>Unity M/S</button></div><label>{t("出力解像度","Output Resolution")}<select value={resolution} onChange={e=>setResolution(e.target.value)}><option value="">{t("最初の画像に合わせる","Match first image")}</option>{[256,512,1024,2048,4096].map(v=><option key={v} value={v}>{v} × {v}</option>)}</select></label></fieldset>:<fieldset disabled={busy}><legend>{t("補正・合成","Adjust / Blend")}</legend><label>{t("ベース強度","Base Strength")}<input type="range" min="0" max="4" step="0.05" value={strength} onChange={e=>setStrength(Number(e.target.value))}/><output>{strength.toFixed(2)}</output></label><label>{t("詳細強度","Detail Strength")}<input type="range" min="0" max="4" step="0.05" value={detailStrength} onChange={e=>setDetailStrength(Number(e.target.value))}/><output>{detailStrength.toFixed(2)}</output></label><label className="checkbox"><input type="checkbox" checked={flip} onChange={e=>setFlip(e.target.checked)}/>{t("G反転（OpenGL ↔ DirectX）","Flip G (OpenGL ↔ DirectX)")}</label></fieldset>}
     </aside>
     <section className="queue"><div className="queue-toolbar"><div><h2>{mode==="channels"?t("チャンネル合成・分離","Channel Packing / Split"):t("既存ノーマルの調整","Normal Map Adjustment")}</h2><p role="status">{notice}</p></div><div className="actions"><button disabled={busy} onClick={clear}>{t("クリア","Clear")}</button>{mode==="channels"&&<button disabled={busy||!channels.some(c=>c.path)} onClick={()=>void run(true)}>{t("RGBAを分離","Split RGBA")}</button>}<button className="primary" disabled={busy||(mode==="channels"?!channels.some(c=>c.path):!base)} onClick={()=>void run()}>{busy?t("処理中…","Processing…"):t("保存","Save")}</button></div></div>

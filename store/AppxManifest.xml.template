@@ -22,6 +22,8 @@
   <Resources>
     <Resource Language="en-us" />
     <Resource Language="ja-jp" />
+    <Resource Language="zh-cn" />
+    <Resource Language="de-de" />
   </Resources>
 
   <Dependencies>

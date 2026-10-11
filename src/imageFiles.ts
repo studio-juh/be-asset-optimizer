@@ -5,10 +5,12 @@ export const supportedImageExtensions = [
   "bmp", "tif", "tiff", "gif", "tga", "dds",
 ];
 
-export const supportedImageShortLabel = t("PNG / JPEG / WebP / HEIC などの画像", "PNG, JPEG, WebP, HEIC, and other images");
+export function supportedImageShortLabel() {
+  return t("PNG / JPEG / WebP / HEIC などの画像", "PNG, JPEG, WebP, HEIC, and other images");
+}
 
 export const supportedImageFilter = {
-  name: t("画像（主要な静止画形式）", "Images (common still-image formats)"),
+  get name() { return t("画像（主要な静止画形式）", "Images (common still-image formats)"); },
   extensions: supportedImageExtensions,
 };
 

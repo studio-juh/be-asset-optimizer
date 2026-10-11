@@ -8,7 +8,7 @@ import { DDSLoader } from "three/examples/jsm/loaders/DDSLoader.js";
 import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { TGALoader } from "three/examples/jsm/loaders/TGALoader.js";
-import { localizedDetail, t } from "./i18n";
+import { localizedDetail, t, useLocalizedState } from "./i18n";
 
 type TextureFile = { path: string; relativePath: string; name: string; bytes: number };
 type ModelPackage = { path: string; name: string; bytesBase64: string; fileBytes: number; textures: TextureFile[]; scanLimited: boolean };
@@ -34,7 +34,7 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
   const autoRotateRef = useRef(false);
   const loadRequestRef = useRef(0);
   const [model, setModel] = useState<ModelPackage>();
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useLocalizedState(() => "");
   const [loading, setLoading] = useState(false);
   const [wireframe, setWireframe] = useState(false);
   const [showGrid, setShowGrid] = useState(true);
@@ -46,10 +46,10 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
   const [diagnosing, setDiagnosing] = useState(false);
 
   const loadModel = async (path: string) => {
-    if (!isModelPath(path)) { setNotice(t("FBXまたはGLBファイルを選択してください", "Choose an FBX or GLB file")); return; }
+    if (!isModelPath(path)) { setNotice(() => (t("FBXまたはGLBファイルを選択してください", "Choose an FBX or GLB file"))); return; }
     const request = ++loadRequestRef.current;
     setLoading(true);
-    setNotice(t("3Dモデルとテクスチャを確認しています…", "Inspecting the 3D model and textures…"));
+    setNotice(() => (t("3Dモデルとテクスチャを確認しています…", "Inspecting the 3D model and textures…")));
     try {
       const loaded = await invoke<ModelPackage>("load_model_package", { path });
       if (request !== loadRequestRef.current) return;
@@ -58,7 +58,7 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
       setDiagnosing(false);
       setStats(emptyStats);
       setResolutions([]);
-      setNotice(t("モデルを読み込みました", "Model loaded"));
+      setNotice(() => (t("モデルを読み込みました", "Model loaded")));
     } catch (error) {
       if (request !== loadRequestRef.current) return;
       setModel(undefined);
@@ -66,7 +66,7 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
       setDiagnosing(false);
       setStats(emptyStats);
       setResolutions([]);
-      setNotice(localizedDetail(error, "Could not load the 3D model"));
+      setNotice(() => (localizedDetail(error, "Could not load the 3D model")));
     } finally { if (request === loadRequestRef.current) setLoading(false); }
   };
 
@@ -79,7 +79,7 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
     const onDrop = (event: Event) => {
       const paths = (event as CustomEvent<string[]>).detail;
       const modelPath = paths.find(isModelPath);
-      if (modelPath) void loadModel(modelPath); else setNotice(t("FBXまたはGLBファイルをドロップしてください", "Drop an FBX or GLB file"));
+      if (modelPath) void loadModel(modelPath); else setNotice(() => (t("FBXまたはGLBファイルをドロップしてください", "Drop an FBX or GLB file")));
     };
     const onMenuOpen = () => { void chooseModel(); };
     window.addEventListener("smartpng-model-drop", onDrop);
@@ -222,7 +222,7 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
         actionRef.current = action;
       }
       resolutionTimer = window.setTimeout(flushResolutions, 0);
-      setNotice("");
+      setNotice(() => (""));
     };
 
     const resize = () => {
@@ -251,12 +251,12 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
       const bytes = decodeBase64(model.bytesBase64);
       try {
         if (model.path.toLowerCase().endsWith(".glb")) {
-        new GLTFLoader(manager).parse(bytes, "", (gltf) => showModel(gltf.scene, gltf.animations), (error) => { if (!disposed) setNotice(t(`GLBを表示できません: ${String(error)}`, `Could not display the GLB: ${localizedDetail(error, "The model could not be parsed")}`)); });
+        new GLTFLoader(manager).parse(bytes, "", (gltf) => showModel(gltf.scene, gltf.animations), (error) => { if (!disposed) setNotice(() => (t(`GLBを表示できません: ${String(error)}`, `Could not display the GLB: ${localizedDetail(error, "The model could not be parsed")}`, { key: "Could not display the GLB: {0}", values: [localizedDetail(error, "The model could not be parsed")] }))); });
         } else {
           const loadedRoot = new FBXLoader(manager).parse(bytes, "");
           showModel(loadedRoot, loadedRoot.animations);
         }
-      } catch (error) { setNotice(t(`3Dモデルを表示できません: ${String(error)}`, `Could not display the 3D model: ${localizedDetail(error, "The model could not be parsed")}`)); }
+      } catch (error) { setNotice(() => (t(`3Dモデルを表示できません: ${String(error)}`, `Could not display the 3D model: ${localizedDetail(error, "The model could not be parsed")}`, { key: "Could not display the 3D model: {0}", values: [localizedDetail(error, "The model could not be parsed")] }))); }
     }
 
     return () => {
@@ -306,7 +306,7 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
     setModel(undefined);
     setStats(emptyStats);
     setResolutions([]);
-    setNotice("");
+    setNotice(() => (""));
   };
   const diagnose = async () => {
     if (!model || diagnosing) return;
@@ -316,7 +316,7 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
       const used = [...new Set(resolutions.flatMap(item => item.resolvedPath ? [item.resolvedPath] : []))];
       const result = await invoke<TextureDiagnosis[]>("diagnose_textures", { paths: used });
       if (request === loadRequestRef.current) setDiagnosis(result);
-    } catch (error) { if (request === loadRequestRef.current) setNotice(localizedDetail(error,"Asset diagnosis failed")); }
+    } catch (error) { if (request === loadRequestRef.current) setNotice(() => (localizedDetail(error,"Asset diagnosis failed"))); }
     finally { if (request === loadRequestRef.current) setDiagnosing(false); }
   };
 
@@ -325,7 +325,7 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
   const mixedResolutions = new Set(diagnosisDimensions.filter(item => item.width > 0 && item.height > 0).map(item => `${item.width}x${item.height}`)).size > 1;
   return <section className="model-preview">
     <div className="model-toolbar">
-      <div className="model-title"><strong title={model?.path}>{model?.name ?? t("3Dプレビュー", "3D Preview")}</strong>{model && <span>{t(`${formatBytes(model.fileBytes)} ・ メッシュ ${stats.meshes} ・ 三角形 ${stats.triangles.toLocaleString()}`, `${formatBytes(model.fileBytes)} · ${stats.meshes} meshes · ${stats.triangles.toLocaleString()} triangles`)}</span>}{notice && <span role="status">{notice}</span>}</div>
+      <div className="model-title"><strong title={model?.path}>{model?.name ?? t("3Dプレビュー", "3D Preview")}</strong>{model && <span>{t(`${formatBytes(model.fileBytes)} ・ メッシュ ${stats.meshes} ・ 三角形 ${stats.triangles.toLocaleString()}`, `${formatBytes(model.fileBytes)} · ${stats.meshes} meshes · ${stats.triangles.toLocaleString()} triangles`, { key: "{0} · {1} meshes · {2} triangles", values: [formatBytes(model.fileBytes), stats.meshes, stats.triangles.toLocaleString()] })}</span>}{notice && <span role="status">{notice}</span>}</div>
       <div className="model-actions"><button onClick={clearModel} disabled={!model && !loading}>{t("クリア", "Clear")}</button><button onClick={chooseModel} disabled={loading}>{model ? t("別のモデル", "Choose Another") : t("モデルを開く", "Open Model")}</button><button disabled={!model} onClick={() => model && revealItemInDir(model.path)}>{t("保存場所", "Show Location")}</button></div>
     </div>
     <div className="model-content">
@@ -348,9 +348,9 @@ export default function ModelPreview({ active = true }: { active?: boolean }) {
           <div><strong title={item.request}>{fileName(item.request)}</strong><small title={item.resolvedPath ?? item.request}>{item.resolvedPath && model ? relativeForDisplay(item.resolvedPath, model.path) : item.request}</small></div>
         </div>)}</div> : <p className="model-empty-note">{t("参照なし", "No references")}</p>}
         {model?.scanLimited && <p className="model-warning">{t("画像が多いため、探索は1,500件で打ち切りました。", "The texture scan stopped after 1,500 files.")}</p>}
-        <div className="model-stats"><span>{t(`マテリアル ${stats.materials}`, `Materials ${stats.materials}`)}</span><span>{t(`アニメーション ${stats.animations}`, `Animations ${stats.animations}`)}</span></div>
+        <div className="model-stats"><span>{t(`マテリアル ${stats.materials}`, `Materials ${stats.materials}`, { key: "Materials {0}", values: [stats.materials] })}</span><span>{t(`アニメーション ${stats.animations}`, `Animations ${stats.animations}`, { key: "Animations {0}", values: [stats.animations] })}</span></div>
         <div className="actions"><button disabled={!model || loading || diagnosing} onClick={()=>void diagnose()}>{diagnosing?t("診断中…","Diagnosing…"):t("アセット診断","Diagnose Asset")}</button></div>
-        {diagnosis && <div className="diagnosis"><h3>{t("診断結果","Diagnosis")}</h3><p>{t("読み込み済み画像（埋め込み含む）RGBA8概算", "Loaded images (including embedded): estimated RGBA8 memory")}: {stats.textures} / {formatBytes(Math.round(stats.textureBytes * 4 / 3))}</p><p>{t(`三角形 ${stats.triangles.toLocaleString()} / メッシュ ${stats.meshes} / マテリアル ${stats.materials}`,`${stats.triangles.toLocaleString()} triangles / ${stats.meshes} meshes / ${stats.materials} materials`)}</p><p>{t(`UVなし ${stats.missingUv} / 反転スケール ${stats.mirrored} / テクスチャ不足 ${missingCount}`,`Missing UV: ${stats.missingUv} / Mirrored transforms: ${stats.mirrored} / Missing textures: ${missingCount}`)}</p><p>{t("参照画像 RGBA8 メモリ概算（ミップ込み）","Referenced images: estimated RGBA8 memory (with mipmaps)")}: {formatBytes(Math.round(diagnosis.reduce((sum,item)=>sum+item.rgbaBytes,0)*4/3))}</p>{diagnosis.map(item=><p key={item.path} title={item.path}>{fileName(item.path)} · {item.width} × {item.height} · {formatBytes(item.fileBytes)} {item.error ? `⚠ ${localizedDetail(item.error,"Unreadable")}` : !item.powerOfTwo ? t("⚠ 非2の累乗","⚠ Non-power-of-two") : ""}</p>)}{stats.textureDetails.map((item,index)=><p key={index}>{t("読み込み画像", "Loaded image")} · {item.name} · {item.width} × {item.height} {!item.powerOfTwo && t("⚠ 非2の累乗", "⚠ Non-power-of-two")}</p>)}{mixedResolutions&&<p>{t("⚠ テクスチャの解像度が混在しています","⚠ Mixed texture resolutions")}</p>}</div>}
+        {diagnosis && <div className="diagnosis"><h3>{t("診断結果","Diagnosis")}</h3><p>{t("読み込み済み画像（埋め込み含む）RGBA8概算", "Loaded images (including embedded): estimated RGBA8 memory")}: {stats.textures} / {formatBytes(Math.round(stats.textureBytes * 4 / 3))}</p><p>{t(`三角形 ${stats.triangles.toLocaleString()} / メッシュ ${stats.meshes} / マテリアル ${stats.materials}`,`${stats.triangles.toLocaleString()} triangles / ${stats.meshes} meshes / ${stats.materials} materials`, { key: "{0} triangles / {1} meshes / {2} materials", values: [stats.triangles.toLocaleString(), stats.meshes, stats.materials] })}</p><p>{t(`UVなし ${stats.missingUv} / 反転スケール ${stats.mirrored} / テクスチャ不足 ${missingCount}`,`Missing UV: ${stats.missingUv} / Mirrored transforms: ${stats.mirrored} / Missing textures: ${missingCount}`, { key: "Missing UV: {0} / Mirrored transforms: {1} / Missing textures: {2}", values: [stats.missingUv, stats.mirrored, missingCount] })}</p><p>{t("参照画像 RGBA8 メモリ概算（ミップ込み）","Referenced images: estimated RGBA8 memory (with mipmaps)")}: {formatBytes(Math.round(diagnosis.reduce((sum,item)=>sum+item.rgbaBytes,0)*4/3))}</p>{diagnosis.map(item=><p key={item.path} title={item.path}>{fileName(item.path)} · {item.width} × {item.height} · {formatBytes(item.fileBytes)} {item.error ? `⚠ ${localizedDetail(item.error,"Unreadable")}` : !item.powerOfTwo ? t("⚠ 非2の累乗","⚠ Non-power-of-two") : ""}</p>)}{stats.textureDetails.map((item,index)=><p key={index}>{t("読み込み画像", "Loaded image")} · {item.name} · {item.width} × {item.height} {!item.powerOfTwo && t("⚠ 非2の累乗", "⚠ Non-power-of-two")}</p>)}{mixedResolutions&&<p>{t("⚠ テクスチャの解像度が混在しています","⚠ Mixed texture resolutions")}</p>}</div>}
       </aside>
     </div>
   </section>;

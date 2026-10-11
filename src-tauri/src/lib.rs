@@ -1,6 +1,7 @@
 pub mod cli;
 mod atlas;
 mod texture_tools;
+mod ui_locale;
 use atlas::AtlasSlot;
 
 use std::{
@@ -726,8 +727,8 @@ fn input_format_name(path: &Path) -> &'static str {
 }
 fn is_supported_image(path: &Path) -> bool { is_heic(path) || standard_image_format(path).is_some() }
 
-fn build_app_menu<R: tauri::Runtime>(app: &AppHandle<R>, japanese: bool) -> tauri::Result<tauri::menu::Menu<R>> {
-  let text = |ja: &'static str, en: &'static str| if japanese { ja } else { en };
+fn build_app_menu<R: tauri::Runtime>(app: &AppHandle<R>, locale: &str) -> tauri::Result<tauri::menu::Menu<R>> {
+  let text = |ja: &'static str, en: &'static str| ui_locale::text(locale, ja, en);
   let open = MenuItemBuilder::with_id("file-open", text("ファイルを開く…", "Open Files…")).accelerator("Ctrl+O").build(app)?;
   let file = SubmenuBuilder::new(app, text("ファイル(&F)", "File (&F)"))
     .item(&open)
@@ -754,11 +755,15 @@ fn build_app_menu<R: tauri::Runtime>(app: &AppHandle<R>, japanese: bool) -> taur
     .text("scale-125", text("表示倍率 125%", "Display Scale 125%"))
     .build()?;
   let japanese_item = CheckMenuItemBuilder::with_id("language-ja", "日本語")
-    .checked(japanese).build(app)?;
+    .checked(locale == "ja").build(app)?;
   let english_item = CheckMenuItemBuilder::with_id("language-en", "English")
-    .checked(!japanese).build(app)?;
+    .checked(locale == "en").build(app)?;
+  let chinese_item = CheckMenuItemBuilder::with_id("language-zh-CN", "简体中文")
+    .checked(locale == "zh-CN").build(app)?;
+  let german_item = CheckMenuItemBuilder::with_id("language-de", "Deutsch")
+    .checked(locale == "de").build(app)?;
   let language = SubmenuBuilder::new(app, text("言語(&L)", "Language (&L)"))
-    .items(&[&japanese_item, &english_item]).build()?;
+    .items(&[&japanese_item, &english_item, &chinese_item, &german_item]).build()?;
   let about = AboutMetadataBuilder::new()
     .name(Some("Be Asset Optimizer"))
     .version(Some(env!("CARGO_PKG_VERSION")))
@@ -776,7 +781,7 @@ fn build_app_menu<R: tauri::Runtime>(app: &AppHandle<R>, japanese: bool) -> taur
 
 #[tauri::command]
 fn set_ui_locale(app: AppHandle, locale: String) -> Result<(), String> {
-  let menu = build_app_menu(&app, locale.eq_ignore_ascii_case("ja")).map_err(|error| error.to_string())?;
+  let menu = build_app_menu(&app, &locale).map_err(|error| error.to_string())?;
   app.set_menu(menu).map_err(|error| error.to_string())?;
   Ok(())
 }
@@ -785,7 +790,7 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_opener::init())
-    .menu(|app| build_app_menu(app, false))
+    .menu(|app| build_app_menu(app, "en"))
     .on_menu_event(|app, event| {
       let _ = app.emit("app-menu-action", event.id().as_ref());
     })

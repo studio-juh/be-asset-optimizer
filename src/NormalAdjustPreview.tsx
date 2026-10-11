@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { localizedDetail, t } from "./i18n";
+import { localizedDetail, t, useLocalizedState } from "./i18n";
 import { adjustNormalPixels } from "./normalAdjustment";
 
 type Input = { source: string; base: ImageData; detail: ImageData | null };
@@ -22,10 +22,10 @@ function pixels(image: HTMLImageElement, width: number, height: number) {
 export default function NormalAdjustPreview({ base, detail, strength, detailStrength, flip }: { base: string; detail: string; strength: number; detailStrength: number; flip: boolean }) {
   const [input, setInput] = useState<Input | null>(null);
   const [adjusted, setAdjusted] = useState("");
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useLocalizedState(() => "");
   useEffect(() => {
     let cancelled = false;
-    setInput(null); setAdjusted(""); setNotice(base ? t("読み込み中…", "Loading…") : "");
+    setInput(null); setAdjusted(""); setNotice(() => (base ? t("読み込み中…", "Loading…") : ""));
     if (base) void (async () => {
       try {
         const loaded = await loadImage(base);
@@ -34,8 +34,8 @@ export default function NormalAdjustPreview({ base, detail, strength, detailStre
         if (cancelled) return;
         const { naturalWidth: width, naturalHeight: height } = loaded.image;
         setInput({ source: loaded.source, base: pixels(loaded.image, width, height), detail: extra ? pixels(extra.image, width, height) : null });
-        setNotice("");
-      } catch (error) { if (!cancelled) setNotice(localizedDetail(error, "Could not load preview")); }
+        setNotice(() => (""));
+      } catch (error) { if (!cancelled) setNotice(() => (localizedDetail(error, "Could not load preview"))); }
     })();
     return () => { cancelled = true; };
   }, [base, detail]);

@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { InspectProgress, InspectResult, supportedImageFilter } from "./imageFiles";
-import { localizedDetail, t } from "./i18n";
+import { localizedDetail, t, useLocalizedState } from "./i18n";
 import { addTextures, AtlasSlot, emptyAtlas, splitSlot, Texture, ResolutionWarning, resolutionWarnings } from "./atlasLayout";
 
 type AtlasResult = { outputPath: string; outputBytes: number; width: number; height: number };
@@ -19,7 +19,7 @@ function Tile({ slot, warning, disabled, highlighted, onAdd, onRemove, onSplit, 
   const [preview, setPreview] = useState<string>();
   const warningText = warning && slot.texture ? t(
     `解像度不足：元画像 ${slot.texture.width} × ${slot.texture.height} px／配置枠 ${warning.width} × ${warning.height} px。縦横比を維持して枠に合わせるには約${warning.scale.toFixed(2)}倍の拡大が必要です。現在は拡大せず、原寸で中央配置します。`,
-    `Low resolution: source ${slot.texture.width} × ${slot.texture.height} px / slot ${warning.width} × ${warning.height} px. Fitting with the original aspect ratio requires approximately ${warning.scale.toFixed(2)}× upscaling. Currently centered at original size without upscaling.`,
+    `Low resolution: source ${slot.texture.width} × ${slot.texture.height} px / slot ${warning.width} × ${warning.height} px. Fitting with the original aspect ratio requires approximately ${warning.scale.toFixed(2)}× upscaling. Currently centered at original size without upscaling.`, { key: "Low resolution: source {0} × {1} px / slot {2} × {3} px. Fitting with the original aspect ratio requires approximately {4}× upscaling. Currently centered at original size without upscaling.", values: [slot.texture.width, slot.texture.height, warning.width, warning.height, warning.scale.toFixed(2)] },
   ) : undefined;
   useEffect(() => {
     let active = true; setPreview(undefined);
@@ -60,7 +60,7 @@ export default function TextureAtlas() {
   const alive = useRef(true);
   const [result, setResult] = useState<AtlasResult>();
   const [target, setTarget] = useState<string>();
-  const [notice, setNotice] = useState(t("画像を任意の枠へドロップしてください。空き枠は黒で埋めます。", "Drop images into any slot. Empty slots will be black."));
+  const [notice, setNotice] = useLocalizedState(() => t("画像を任意の枠へドロップしてください。空き枠は黒で埋めます。", "Drop images into any slot. Empty slots will be black."));
   const count = slots.filter(slot => slot.texture).length;
   const selectedResolution = resolution === "custom" ? (custom.trim() ? Number(custom) : NaN) : resolution ? Number(resolution) : null;
   const warnings = resolutionWarnings(slots, square, selectedResolution, padding);
@@ -69,14 +69,14 @@ export default function TextureAtlas() {
   const addPaths = async (paths: string[], id?: string) => {
     if (!paths.length || busyRef.current) return;
     lock(true); const requestId = crypto.randomUUID(); requestRef.current = requestId;
-    setNotice(t("画像を確認しています…", "Inspecting images…"));
+    setNotice(() => (t("画像を確認しています…", "Inspecting images…")));
     try {
       const inspected = await invoke<InspectResult<Texture>>("inspect_files", { paths, requestId, maxFiles: 17 });
       if (!alive.current) return;
       const added = addTextures(slotsRef.current, inspected.files, id);
       commit(added.slots);
-      setNotice(t(`${added.added} 枚を追加。未追加 ${inspected.files.length - added.added} 枚、読込失敗 ${inspected.failures.length} 件（最大16枚）。`, `${added.added} added; ${inspected.files.length - added.added} not added, ${inspected.failures.length} failed (maximum 16 images).`));
-    } catch (error) { if (alive.current) setNotice(localizedDetail(error, "Could not add images")); }
+      setNotice(() => (t(`${added.added} 枚を追加。未追加 ${inspected.files.length - added.added} 枚、読込失敗 ${inspected.failures.length} 件（最大16枚）。`, `${added.added} added; ${inspected.files.length - added.added} not added, ${inspected.failures.length} failed (maximum 16 images).`, { key: "{0} added; {1} not added, {2} failed (maximum 16 images).", values: [added.added, inspected.files.length - added.added, inspected.failures.length] })));
+    } catch (error) { if (alive.current) setNotice(() => (localizedDetail(error, "Could not add images"))); }
     finally { requestRef.current = ""; lock(false); }
   };
   const chooseFiles = async (id?: string) => {
@@ -88,7 +88,7 @@ export default function TextureAtlas() {
   useEffect(() => {
     alive.current = true;
     const off = listen<InspectProgress<Texture>>("inspect-files-progress", event => {
-      if (alive.current && event.payload.requestId === requestRef.current) setNotice(t(`${event.payload.completed} / ${event.payload.total} 枚を読込中…`, `Loading ${event.payload.completed} / ${event.payload.total}…`));
+      if (alive.current && event.payload.requestId === requestRef.current) setNotice(() => (t(`${event.payload.completed} / ${event.payload.total} 枚を読込中…`, `Loading ${event.payload.completed} / ${event.payload.total}…`, { key: "Loading {0} / {1}…", values: [event.payload.completed, event.payload.total] })));
     });
     const onDrag = (event: Event) => {
       const detail = (event as CustomEvent<NativeDrag>).detail;
@@ -114,13 +114,13 @@ export default function TextureAtlas() {
     const value = resolution === "custom" ? custom : resolution;
     const numeric = value === "" ? null : Number(value);
     if (square && ((resolution === "custom" && !value) || (numeric !== null && (!Number.isInteger(numeric) || numeric < 16 || numeric > 4096)))) {
-      setNotice(t("1大枠の解像度を16〜4096 pxで指定してください", "Enter a large-slot resolution between 16 and 4096 px")); return;
+      setNotice(() => (t("1大枠の解像度を16〜4096 pxで指定してください", "Enter a large-slot resolution between 16 and 4096 px"))); return;
     }
-    lock(true); setResult(undefined); setNotice(t("アトラスを作成しています…", "Creating atlas…"));
+    lock(true); setResult(undefined); setNotice(() => (t("アトラスを作成しています…", "Creating atlas…")));
     try {
       const created = await invoke<AtlasResult>("create_texture_atlas", { slots: slotsRef.current.map(slot => ({ x: slot.x, y: slot.y, size: slot.size, path: slot.texture?.path ?? null })), settings: { outputDir: outputDir || null, padToSquare: square, squareResolution: square ? numeric : null, padding } });
-      if (alive.current) { setResult(created); setNotice(t("テクスチャアトラスを作成しました", "Texture atlas created")); }
-    } catch (error) { if (alive.current) setNotice(localizedDetail(error, "Could not create atlas. Try a smaller slot resolution.")); }
+      if (alive.current) { setResult(created); setNotice(() => (t("テクスチャアトラスを作成しました", "Texture atlas created"))); }
+    } catch (error) { if (alive.current) setNotice(() => (localizedDetail(error, "Could not create atlas. Try a smaller slot resolution."))); }
     finally { lock(false); }
   };
   return <section className="workspace">
@@ -130,10 +130,10 @@ export default function TextureAtlas() {
         <label>{t("端の色を延長する余白", "Edge Extrusion Padding")}<select value={padding} onChange={event => { setPadding(Number(event.target.value)); setResult(undefined); }}>{[0,1,2,4,8,16,32,64].map(value=><option key={value} value={value}>{value} px</option>)}</select></label>
         <div className="actions atlas-layout-actions">
           <button type="button" disabled={slots.every(slot => slot.size === 1)} onClick={() => { let next = slotsRef.current; for (const slot of [...next]) if (slot.size === 2) next = splitSlot(next, slot.id); commit(next); }}>{t("全枠を4分割（4×4）", "Split all slots (4×4)")}</button>
-          <button type="button" onClick={() => { commit(emptyAtlas()); setNotice(t("配置を2×2へ戻しました", "Reset to 2×2 layout")); }}>{t("クリアして2×2へ戻す", "Clear and reset to 2×2")}</button>
+          <button type="button" onClick={() => { commit(emptyAtlas()); setNotice(() => (t("配置を2×2へ戻しました", "Reset to 2×2 layout"))); }}>{t("クリアして2×2へ戻す", "Clear and reset to 2×2")}</button>
         </div>
         <label className="checkbox"><input type="checkbox" checked={square} onChange={event => { setSquare(event.target.checked); setResult(undefined); }} />{t("各画像を正方形として補完", "Pad images to square cells")}</label>
-        {square && <label>{t("1大枠の解像度", "Resolution per large slot")}<select value={resolution} onChange={event => { setResolution(event.target.value); setResult(undefined); }}><option value="">{t("自動", "Automatic")}</option>{[256,512,1024,2048,4096].map(size => <option key={size} value={size}>{size} × {size}</option>)}<option value="custom">Custom…</option></select>{resolution === "custom" && <input inputMode="numeric" value={custom} onChange={event => { setCustom(event.target.value); setResult(undefined); }} placeholder="16–4096 px" />}</label>}
+        {square && <label>{t("1大枠の解像度", "Resolution per large slot")}<select value={resolution} onChange={event => { setResolution(event.target.value); setResult(undefined); }}><option value="">{t("自動", "Automatic")}</option>{[256,512,1024,2048,4096].map(size => <option key={size} value={size}>{size} × {size}</option>)}<option value="custom">{t("カスタム…", "Custom…")}</option></select>{resolution === "custom" && <input inputMode="numeric" value={custom} onChange={event => { setCustom(event.target.value); setResult(undefined); }} placeholder="16–4096 px" />}</label>}
       </fieldset>
     </aside>
     <section className="queue"><div className="queue-toolbar"><div><h2>{t("テクスチャアトラス", "Texture Atlas")} <span>{count} / {slots.length}</span></h2><p>{result ? `${result.width} × ${result.height} · ${(result.outputBytes / 1024 / 1024).toFixed(2)} MB` : notice}</p></div><div className="actions"><button className="secondary" onClick={() => void chooseFiles()} disabled={busy || count === 16}>{t("画像を追加", "Add Images")}</button><button className="primary" onClick={create} disabled={busy || !count}>{busy ? t("処理中…", "Processing…") : t("アトラスを作成", "Create Atlas")}</button></div></div>

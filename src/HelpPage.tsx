@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { locale, t } from "./i18n";
+import { locale, t, translate } from "./i18n";
 import type { StorePreviewTab } from "./storePreview";
 
 type Topic = { id: StorePreviewTab; title: [string, string]; steps: [string[], string[]]; note: [string, string] };
@@ -34,14 +34,15 @@ export default function HelpPage({ initialTopic, onClose }: { initialTopic: Stor
   const [expanded, setExpanded] = useState(false);
   const topic = topics.find(item => item.id === selected)!;
   const language = locale === "ja" ? 0 : 1;
+  const text = (pair: [string, string]) => language === 0 ? pair[0] : translate(pair[1]);
   useEffect(() => { dialog.current?.showModal(); }, []);
   useEffect(() => { setExpanded(false); article.current?.scrollTo(0, 0); }, [selected]);
   return <dialog ref={dialog} className="help-dialog" onCancel={onClose} onClose={onClose} aria-labelledby="help-title">
     <header className="help-header"><h2 id="help-title">{t("使い方 — Be Asset Optimizer", "Help — Be Asset Optimizer")}</h2><button autoFocus onClick={onClose} aria-label={t("ヘルプを閉じる", "Close help")}>×</button></header>
-    <div className="help-layout"><nav className="help-nav" aria-label={t("ヘルプ目次", "Help topics")}>{topics.map(item => <button key={item.id} className={selected === item.id ? "active" : ""} aria-current={selected === item.id ? "page" : undefined} onClick={() => setSelected(item.id)}>{item.title[language]}</button>)}<p>{t("F1でヘルプを表示\nEscで閉じる", "F1 opens help\nEsc closes help")}</p></nav>
-      <article ref={article} className="help-article"><h3>{topic.title[language]}</h3><p className="help-basics">{t("タブを切り替えても入力内容は保持されます。出力先未指定の場合は入力元の近くに保存され、元画像は上書きしません。", "Inputs remain when switching tabs. Without a specified output folder, files are saved near the source. Originals are not overwritten.")}</p>
-        <button className={`help-screenshot ${expanded ? "expanded" : ""}`} onClick={() => setExpanded(value => !value)} aria-expanded={expanded} aria-label={t("スクリーンショットを拡大／縮小", "Expand / shrink screenshot")}><img key={`${locale}-${selected}`} src={`${import.meta.env.BASE_URL}help/${locale}/${selected}.png`} alt={t(`${topic.title[0]}の操作画面`, `${topic.title[1]} screenshot`)} /></button>
-        <ol>{topic.steps[language].map(step => <li key={step}>{step}</li>)}</ol><p className="help-note">{topic.note[language]}</p>
+    <div className="help-layout"><nav className="help-nav" aria-label={t("ヘルプ目次", "Help topics")}>{topics.map(item => <button key={item.id} className={selected === item.id ? "active" : ""} aria-current={selected === item.id ? "page" : undefined} onClick={() => setSelected(item.id)}>{text(item.title)}</button>)}<p>{t("F1でヘルプを表示\nEscで閉じる", "F1 opens help\nEsc closes help")}</p></nav>
+      <article ref={article} className="help-article"><h3>{text(topic.title)}</h3><p className="help-basics">{t("タブを切り替えても入力内容は保持されます。出力先未指定の場合は入力元の近くに保存され、元画像は上書きしません。", "Inputs remain when switching tabs. Without a specified output folder, files are saved near the source. Originals are not overwritten.")}</p>
+        <button className={`help-screenshot ${expanded ? "expanded" : ""}`} onClick={() => setExpanded(value => !value)} aria-expanded={expanded} aria-label={t("スクリーンショットを拡大／縮小", "Expand / shrink screenshot")}><img key={`${locale}-${selected}`} src={`${import.meta.env.BASE_URL}help/${locale}/${selected}.png`} alt={t(`${topic.title[0]}の操作画面`, `${topic.title[1]} screenshot`, { key: "{0} screenshot", values: [translate(topic.title[1])] })} /></button>
+        <ol>{topic.steps[language].map(step => <li key={step}>{language === 0 ? step : translate(step)}</li>)}</ol><p className="help-note">{text(topic.note)}</p>
       </article></div>
   </dialog>;
 }
